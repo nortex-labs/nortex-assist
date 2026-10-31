@@ -6,7 +6,9 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-pub const ACCENTS: [&str; 6] = ["green", "pink", "blue", "red", "orange", "violet"];
+/// "custom" is the user's own colour, kept in `accent_custom`.
+pub const ACCENTS: [&str; 7] = ["green", "pink", "blue", "red", "orange", "violet", "custom"];
+pub const DEFAULT_CUSTOM: (u8, u8, u8) = (0x4f, 0xd1, 0xc5);
 pub const GROQ_MODEL: &str = "qwen/qwen3.8-27b";
 /// Lowest window opacity (10 %): below this the window is too easy to lose.
 pub const MIN_OPACITY: f32 = 0.10;
@@ -75,8 +77,12 @@ pub struct Config {
     pub shot_mode: String,
     /// Automatic update checks are on unless this is set.
     pub no_update_check: bool,
+    /// The tray icon is shown unless this is set.
+    pub hide_tray: bool,
     pub theme: String,
     pub accent: String,
+    /// Own accent colour as "#RRGGBB" (used when `accent` is "custom").
+    pub accent_custom: String,
     pub opacity: Option<f32>,
     pub bounds: Option<Rect>,
     /// Own system prompt; empty means the built-in one.
@@ -102,6 +108,9 @@ impl Config {
     pub fn accent(&self) -> &str {
         if ACCENTS.contains(&self.accent.as_str()) { &self.accent } else { "green" }
     }
+    pub fn custom_rgb(&self) -> (u8, u8, u8) {
+        parse_color(&self.accent_custom).unwrap_or(DEFAULT_CUSTOM)
+    }
     /// 0 = own area picker, 1 = whole monitor, 2 = Windows snipping tool.
     pub fn shot_mode_index(&self) -> usize {
         match self.shot_mode.as_str() {
@@ -116,6 +125,37 @@ impl Config {
     pub fn has_key(&self) -> bool {
         if self.is_groq() { !self.groq_key.is_empty() } else { !self.gemini_key.is_empty() }
     }
+}
+
+/// Reads a colour typed by the user: "#4FD1C5", "4fd1c5", "#4FD", "79, 209, 197", "79 209 197" or "rgb(79,209,197)".
+pub fn parse_color(text: &str) -> Option<(u8, u8, u8)> {
+    let t = text.trim().to_lowercase();
+    let t = t.strip_prefix("rgb").map(|r| r.trim().trim_start_matches('(').trim_end_matches(')').to_string()).unwrap_or(t);
+    let parts: Vec<&str> = t.split(|c: char| c == ',' || c == ';' || c.is_whitespace()).filter(|p| !p.is_empty()).collect();
+    if parts.len() == 3 {
+        let mut v = [0u8; 3];
+        for (i, p) in parts.iter().enumerate() {
+            v[i] = p.parse::<u8>().ok()?;
+        }
+        return Some((v[0], v[1], v[2]));
+    }
+    let hex = t.trim_start_matches('#');
+    if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let byte = |s: &str| u8::from_str_radix(s, 16).ok();
+    match hex.len() {
+        6 => Some((byte(&hex[0..2])?, byte(&hex[2..4])?, byte(&hex[4..6])?)),
+        3 => {
+            let d = |i: usize| byte(&hex[i..i + 1]).map(|x| x * 17);
+            Some((d(0)?, d(1)?, d(2)?))
+        }
+        _ => None,
+    }
+}
+
+pub fn hex_color((r, g, b): (u8, u8, u8)) -> String {
+    format!("#{r:02X}{g:02X}{b:02X}")
 }
 
 pub fn data_dir() -> PathBuf {
@@ -226,4 +266,22 @@ pub fn validate(s: &SettingsInput) -> Result<(), String> {
         return Err(format!("Промпт слишком длинный (больше {MAX_PROMPT} символов)"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn colors() {
+        assert_eq!(parse_color("#4FD1C5"), Some((0x4f, 0xd1, 0xc5)));
+        assert_eq!(parse_color(" 4fd1c5 "), Some((0x4f, 0xd1, 0xc5)));
+        assert_eq!(parse_color("#fff"), Some((255, 255, 255)));
+        assert_eq!(parse_color("79, 209, 197"), Some((79, 209, 197)));
+        assert_eq!(parse_color("rgb(79 209 197)"), Some((79, 209, 197)));
+        assert_eq!(parse_color("300, 0, 0"), None);
+        assert_eq!(parse_color("#12345"), None);
+        assert_eq!(parse_color("зелёный"), None);
+        assert_eq!(hex_color((79, 209, 197)), "#4FD1C5");
+    }
 }

@@ -6,6 +6,9 @@ export struct HistItem { title: string, sub: string }
 export global Theme {
     in property <bool> dark: true;
     in property <string> accent-name: "green";
+    // the user's own accent (accent-name "custom") and a readable ink on top of it; set from Rust
+    in property <color> custom-accent: #4fd1c5;
+    in property <color> custom-ink: #151515;
 
     out property <color> window: dark ? #0e1012 : #f8f9f4;
     out property <color> surface: dark ? #131619 : #ffffff;
@@ -24,6 +27,7 @@ export global Theme {
     out property <color> accent-text: dark ? accent : accent-text-of(accent-name);
 
     public pure function accent-of(name: string, d: bool) -> color {
+        if (name == "custom") { return custom-accent; }
         if (name == "pink") { return d ? #fa8bc8 : #d94d99; }
         if (name == "blue") { return d ? #84b8ff : #4d83d4; }
         if (name == "red") { return d ? #ff8179 : #d65350; }
@@ -33,6 +37,7 @@ export global Theme {
     }
 
     pure function accent-ink-of(name: string) -> color {
+        if (name == "custom") { return custom-ink; }
         if (name == "pink") { return #24131e; }
         if (name == "blue") { return #101a29; }
         if (name == "red") { return #291312; }
@@ -42,6 +47,7 @@ export global Theme {
     }
 
     pure function accent-text-of(name: string) -> color {
+        if (name == "custom") { return custom-accent.darker(0.35); }
         if (name == "pink") { return #b83b80; }
         if (name == "blue") { return #3567b3; }
         if (name == "red") { return #b83c39; }
@@ -100,6 +106,39 @@ component Panel inherits Rectangle {
         height: parent.height;
         animate y { duration: 200ms; easing: ease-out; }
         @children
+    }
+}
+
+// Logo and name in the empty toolbar of a fresh window; fades in.
+component Brand inherits HorizontalLayout {
+    property <bool> shown: false;
+    Timer { interval: 16ms; running: !root.shown; triggered => { root.shown = true; } }
+    spacing: 7px;
+    padding-left: 4px;
+    // the app icon redrawn in the accent colour: a rounded square with a soft gradient and dark sparkles
+    Rectangle {
+        width: 18px;
+        height: 18px;
+        y: (parent.height - self.height) / 2;
+        // solid accent (rounded corners only work on plain fills) under a light-to-shade sheen picture
+        border-radius: 5px;
+        background: Theme.accent;
+        opacity: root.shown ? 1 : 0;
+        animate opacity { duration: 200ms; easing: ease-out; }
+        Image { source: @image-url("icons/sheen.svg"); width: parent.width; height: parent.height; }
+        Image {
+            source: @image-url("icons/spark.svg");
+            width: parent.width;
+            height: parent.height;
+            colorize: Theme.accent-ink;
+        }
+    }
+    HorizontalLayout {
+        spacing: 4px;
+        opacity: root.shown ? 1 : 0;
+        animate opacity { duration: 200ms; easing: ease-out; }
+        Text { text: "Nortex"; color: Theme.fg; font-size: 13px; font-weight: 600; vertical-alignment: center; }
+        Text { text: "Assist"; color: Theme.accent-text; font-size: 13px; font-weight: 600; vertical-alignment: center; }
     }
 }
 
@@ -279,6 +318,7 @@ component Field inherits Rectangle {
     in property <string> placeholder;
     in property <bool> password: false;
     callback edited();
+    callback accepted();
     height: 32px;
     background: Theme.field;
     border-radius: 8px;
@@ -310,6 +350,7 @@ component Field inherits Rectangle {
             font-size: 13px;
             single-line: true;
             edited => { root.edited(); }
+            accepted => { root.accepted(); }
         }
     }
     if root.text == "": Text {
@@ -415,7 +456,8 @@ component OpacitySlider inherits Rectangle {
     callback changed(float);
     height: 22px;
     function apply(x: length) {
-        root.value = Math.clamp(root.minimum + x / root.width * (root.maximum - root.minimum), root.minimum, root.maximum);
+        // the knob centre runs from 8px to width - 8px; whole percents only
+        root.value = Math.round(Math.clamp(root.minimum + (x - 8px) / (root.width - 16px) * (root.maximum - root.minimum), root.minimum, root.maximum));
         root.changed(root.value);
     }
     // children of a plain Rectangle are centred unless x is set, hence the explicit x: 0px
@@ -481,6 +523,104 @@ component Card inherits Rectangle {
 component Label inherits Text {
     color: Theme.muted;
     font-size: 11px;
+}
+
+// Palette for the user's own accent colour: saturation/brightness square, hue strip, HEX/RGB field.
+component AccentPicker inherits VerticalLayout {
+    in-out property <float> h;
+    in-out property <float> s;
+    in-out property <float> v;
+    in-out property <string> text;
+    callback picked(color);
+    callback text-edited(string);
+    property <bool> shown: false;
+    Timer { interval: 16ms; running: !root.shown; triggered => { root.shown = true; } }
+    spacing: 10px;
+    padding-top: 4px;
+    opacity: root.shown ? 1 : 0;
+    animate opacity { duration: 180ms; easing: ease-out; }
+
+    // saturation grows to the right, brightness upwards
+    Rectangle {
+        height: 120px;
+        Rectangle {
+            border-radius: 8px;
+            clip: true;
+            background: hsv(root.h, 1, 1);
+            Rectangle { background: @linear-gradient(90deg, #ffffff 0%, #ffffff00 100%); }
+            Rectangle { background: @linear-gradient(180deg, #00000000 0%, #000000 100%); }
+        }
+        Rectangle {
+            width: 14px;
+            height: 14px;
+            x: root.s * parent.width - 7px;
+            y: (1 - root.v) * parent.height - 7px;
+            border-radius: 7px;
+            border-width: 2px;
+            border-color: #ffffff;
+            background: hsv(root.h, root.s, root.v);
+        }
+        TouchArea {
+            mouse-cursor: MouseCursor.crosshair;
+            function apply() {
+                root.s = Math.clamp(self.mouse-x / self.width, 0, 1);
+                root.v = 1 - Math.clamp(self.mouse-y / self.height, 0, 1);
+                root.picked(hsv(root.h, root.s, root.v));
+            }
+            pointer-event(e) => {
+                if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) { self.apply(); }
+            }
+            moved => { if (self.pressed) { self.apply(); } }
+        }
+    }
+
+    // hue
+    Rectangle {
+        height: 14px;
+        Rectangle {
+            border-radius: 7px;
+            background: @linear-gradient(90deg, #ff0000 0%, #ffff00 16.66%, #00ff00 33.33%, #00ffff 50%, #0000ff 66.66%, #ff00ff 83.33%, #ff0000 100%);
+        }
+        Rectangle {
+            width: 16px;
+            height: 16px;
+            x: root.h / 360 * (parent.width - 14px) + 7px - 8px;
+            y: -1px;
+            border-radius: 8px;
+            border-width: 2px;
+            border-color: #ffffff;
+            background: hsv(root.h, 1, 1);
+        }
+        TouchArea {
+            mouse-cursor: MouseCursor.pointer;
+            function apply() {
+                root.h = Math.clamp((self.mouse-x - 7px) / (self.width - 14px), 0, 1) * 359.9;
+                root.picked(hsv(root.h, root.s, root.v));
+            }
+            pointer-event(e) => {
+                if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) { self.apply(); }
+            }
+            moved => { if (self.pressed) { self.apply(); } }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 8px;
+        Rectangle {
+            width: 32px;
+            border-radius: 8px;
+            background: hsv(root.h, root.s, root.v);
+            border-width: 1px;
+            border-color: Theme.line-strong;
+        }
+        Field {
+            text <=> root.text;
+            placeholder: "#4FD1C5 или 79, 209, 197";
+            edited => { root.text-edited(self.text); }
+            accepted => { root.text-edited(self.text); }
+        }
+    }
+    Label { text: "Двигай по палитре или впиши HEX (#4FD1C5) или RGB (79, 209, 197)."; font-size: 10px; wrap: TextWrap.word-wrap; }
 }
 
 // "Думаю" with three softly pulsing dots, shown until the first words of the answer arrive.
@@ -570,6 +710,13 @@ export component MainWindow inherits Window {
     in-out property <bool> autostart;
     in-out property <bool> history-enabled;
     in-out property <bool> overlay-mode;
+    in-out property <bool> show-tray: true;
+    // own accent colour: palette state (hue in degrees, saturation and value 0..1) and the HEX field
+    in-out property <bool> custom-open: false;
+    in-out property <float> custom-h: 175;
+    in-out property <float> custom-s: 0.6;
+    in-out property <float> custom-v: 0.8;
+    in-out property <string> custom-text;
     in-out property <int> shot-mode;
     in-out property <int> theme-index;
     in property <string> saved-text;
@@ -579,6 +726,7 @@ export component MainWindow inherits Window {
     in property <[string]> hotkey-labels;
     in property <[string]> hotkey-values;
     in property <string> shot-hotkey: "Alt+W";
+    in property <string> free-hotkey: "Alt+E";
     property <[string]> gemini-models: [
         "Gemini 3.5 Flash-Lite · быстрая, по умолчанию",
         "Gemini 3.8 Flash · новая, умнее",
@@ -587,6 +735,7 @@ export component MainWindow inherits Window {
         "Своя модель…",
     ];
     property <bool> panel-open: root.settings-open || root.history-open;
+    property <bool> brand-shown: !root.busy && !((root.nav-visible || root.answer-tools) && !root.panel-open);
 
     callback submit(string);
     callback prev();
@@ -616,6 +765,8 @@ export component MainWindow inherits Window {
     callback opacity-changed(float);
     callback theme-picked(int);
     callback accent-picked(string);
+    callback custom-color-picked(color);
+    callback custom-text-edited(string);
     callback hotkey-key(int, string, bool, bool, bool, bool);
     callback hotkey-cancelled();
     callback reset-hotkeys();
@@ -677,6 +828,8 @@ export component MainWindow inherits Window {
                         padding-top: 8px;
                         padding-bottom: 8px;
                         spacing: 2px;
+                        // app name while the left side of the toolbar has no buttons
+                        if root.brand-shown: Brand { }
                         // answer tools only make sense while an answer is on screen
                         if root.nav-visible && !root.panel-open: IconButton { icon: @image-url("icons/left.svg"); tip: "Предыдущий ответ"; enabled: root.prev-enabled; clicked => { root.prev(); } }
                         if root.nav-visible && !root.panel-open: Text { text: root.pos-text; color: Theme.muted; font-size: 11px; vertical-alignment: center; horizontal-alignment: center; min-width: 34px; }
@@ -944,6 +1097,89 @@ export component MainWindow inherits Window {
 
                             Card {
                                 index: "02";
+                                title: "Внешний вид";
+                                Label { text: "Тема"; }
+                                Segmented {
+                                    items: ["Тёмная", "Светлая"];
+                                    current <=> root.theme-index;
+                                    picked(i) => { root.theme-picked(i); }
+                                }
+                                Label { text: "Прозрачность окна: " + Math.round(root.opacity-pct) + "%"; }
+                                OpacitySlider {
+                                    value <=> root.opacity-pct;
+                                    changed(v) => { root.opacity-changed(v); }
+                                }
+                                Label { text: "Акцентный цвет"; }
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    alignment: start;
+                                    for name in ["green", "pink", "blue", "red", "orange", "violet"]: Rectangle {
+                                        property <bool> picked: Theme.accent-name == name;
+                                        width: 30px;
+                                        height: 30px;
+                                        Rectangle {
+                                            // the chosen colour gets a ring, the hovered one grows a little
+                                            width: dta.has-hover || parent.picked ? 26px : 22px;
+                                            height: self.width;
+                                            border-radius: self.width / 2;
+                                            background: Theme.accent-of(name, Theme.dark);
+                                            border-width: parent.picked ? 2px : 0px;
+                                            border-color: Theme.fg;
+                                            animate width { duration: 150ms; easing: ease-out; }
+                                            animate border-width { duration: 150ms; }
+                                        }
+                                        dta := TouchArea {
+                                            mouse-cursor: MouseCursor.pointer;
+                                            clicked => { root.custom-open = false; root.accent-picked(name); }
+                                        }
+                                    }
+                                    // own colour: a rainbow dot that opens the palette
+                                    Rectangle {
+                                        property <bool> picked: Theme.accent-name == "custom";
+                                        width: 30px;
+                                        height: 30px;
+                                        Rectangle {
+                                            width: cta.has-hover || parent.picked || root.custom-open ? 26px : 22px;
+                                            height: self.width;
+                                            border-radius: self.width / 2;
+                                            border-width: parent.picked ? 2px : 0px;
+                                            border-color: Theme.fg;
+                                            animate width { duration: 150ms; easing: ease-out; }
+                                            animate border-width { duration: 150ms; }
+                                            // the rainbow is a picture: gradients do not get round corners
+                                            Image { source: @image-url("icons/rainbow.svg"); width: parent.width; height: parent.height; }
+                                            // the chosen own colour sits in the middle
+                                            if parent.picked: Rectangle {
+                                                width: 10px;
+                                                height: 10px;
+                                                border-radius: 5px;
+                                                background: Theme.custom-accent;
+                                                border-width: 1px;
+                                                border-color: #00000040;
+                                            }
+                                        }
+                                        cta := TipArea {
+                                            tip: "Свой цвет: палитра, HEX или RGB";
+                                            mouse-cursor: MouseCursor.pointer;
+                                            clicked => {
+                                                root.custom-open = !root.custom-open;
+                                                if (root.custom-open) { root.accent-picked("custom"); }
+                                            }
+                                        }
+                                    }
+                                }
+                                if root.custom-open: AccentPicker {
+                                    h <=> root.custom-h;
+                                    s <=> root.custom-s;
+                                    v <=> root.custom-v;
+                                    text <=> root.custom-text;
+                                    picked(c) => { root.custom-color-picked(c); }
+                                    text-edited(t) => { root.custom-text-edited(t); }
+                                }
+                            }
+
+                            Card {
+                                index: "03";
                                 title: "Стиль ответов";
                                 Label { text: "Заготовки"; }
                                 HorizontalLayout {
@@ -987,50 +1223,15 @@ export component MainWindow inherits Window {
                             }
 
                             Card {
-                                index: "03";
-                                title: "Внешний вид";
-                                Label { text: "Тема"; }
-                                Segmented {
-                                    items: ["Тёмная", "Светлая"];
-                                    current <=> root.theme-index;
-                                    picked(i) => { root.theme-picked(i); }
-                                }
-                                Label { text: "Прозрачность окна: " + Math.round(root.opacity-pct) + "%"; }
-                                OpacitySlider {
-                                    value <=> root.opacity-pct;
-                                    changed(v) => { root.opacity-changed(v); }
-                                }
-                                Label { text: "Акцентный цвет"; }
-                                HorizontalLayout {
-                                    spacing: 6px;
-                                    alignment: start;
-                                    for name in ["green", "pink", "blue", "red", "orange", "violet"]: Rectangle {
-                                        property <bool> picked: Theme.accent-name == name;
-                                        width: 30px;
-                                        height: 30px;
-                                        Rectangle {
-                                            // the chosen colour gets a ring, the hovered one grows a little
-                                            width: dta.has-hover || parent.picked ? 26px : 22px;
-                                            height: self.width;
-                                            border-radius: self.width / 2;
-                                            background: Theme.accent-of(name, Theme.dark);
-                                            border-width: parent.picked ? 2px : 0px;
-                                            border-color: Theme.fg;
-                                            animate width { duration: 150ms; easing: ease-out; }
-                                            animate border-width { duration: 150ms; }
-                                        }
-                                        dta := TouchArea {
-                                            mouse-cursor: MouseCursor.pointer;
-                                            clicked => { root.accent-picked(name); }
-                                        }
-                                    }
-                                }
-                            }
-
-                            Card {
                                 index: "04";
                                 title: "Поведение";
                                 Check { label: "Запускать вместе с Windows"; checked <=> root.autostart; }
+                                Check { label: "Отображать приложение в трее"; checked <=> root.show-tray; }
+                                if !root.show-tray: Label {
+                                    text: "Без значка в трее окно открывается горячими клавишами (" + root.free-hotkey + "), а выйти можно кнопкой «Закрыть программу» внизу настроек.";
+                                    font-size: 10px;
+                                    wrap: TextWrap.word-wrap;
+                                }
                                 HorizontalLayout {
                                     spacing: 8px;
                                     Check { label: "Сохранять историю (зашифрованно)"; checked <=> root.history-enabled; horizontal-stretch: 1; }
@@ -1216,7 +1417,8 @@ export component MainWindow inherits Window {
                                 }
                                 Rectangle {
                                     width: 30px;
-                                    background: sta.pressed ? Theme.accent.darker(0.2) : sta.has-hover ? Theme.accent.brighter(0.1) : Theme.accent;
+                                    // grey at rest, lights up with the accent colour under the pointer
+                                    background: sta.pressed ? Theme.accent.darker(0.2) : sta.has-hover ? Theme.accent : Theme.line-strong;
                                     animate background { duration: 140ms; }
                                     border-radius: 9px;
                                     Image {
@@ -1227,7 +1429,8 @@ export component MainWindow inherits Window {
                                         x: (parent.width - self.width) / 2 + (sta.has-hover ? 2px : 0px);
                                         y: (parent.height - self.height) / 2 - (sta.has-hover ? 1px : 0px);
                                         animate x, y { duration: 160ms; easing: ease-out; }
-                                        colorize: Theme.accent-ink;
+                                        colorize: sta.has-hover || sta.pressed ? Theme.accent-ink : Theme.muted;
+                                        animate colorize { duration: 140ms; }
                                     }
                                     sta := TipArea {
                                         tip: "Отправить (Enter).\nCtrl+V в поле вставляет картинку из буфера";
@@ -1365,11 +1568,8 @@ export component SnipWindow inherits Window {
     Image { width: parent.width; height: parent.height; source: root.shot; image-fit: fill; }
 
     // before a selection: the whole screen dims in; during it, four bands leave the selection bright
-    if !root.started: Rectangle {
-        background: root.dim;
-        opacity: root.intro ? 1 : 0;
-        animate opacity { duration: 200ms; easing: ease-out; }
-    }
+    // dimmed from the first frame, so the screen never shows a bright frozen copy first
+    if !root.started: Rectangle { background: root.dim; }
     if root.started: Rectangle { x: 0; y: 0; width: parent.width; height: root.sy; background: root.dim; }
     if root.started: Rectangle { x: 0; y: root.sy + root.sh; width: parent.width; height: parent.height - root.sy - root.sh; background: root.dim; }
     if root.started: Rectangle { x: 0; y: root.sy; width: root.sx; height: root.sh; background: root.dim; }

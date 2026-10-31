@@ -4,7 +4,8 @@
 use std::ffi::c_void;
 use std::time::Duration;
 use windows::core::w;
-use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HWND, POINT};
+use windows::Win32::Foundation::{CloseHandle, GetLastError, COLORREF, ERROR_ALREADY_EXISTS, HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows::Win32::Graphics::Gdi::{
     BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits, GetMonitorInfoW, MonitorFromPoint,
     MonitorFromWindow, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CAPTUREBLT, DIB_RGB_COLORS, MONITORINFO,
@@ -15,7 +16,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, keybd_event,
 use windows::Win32::Foundation::RECT;
 use windows::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, SetForegroundWindow,
-    SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, SWP_NOACTIVATE, SWP_NOZORDER, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, LWA_ALPHA, SC_KEYMENU, SWP_NOACTIVATE, SWP_NOZORDER, WM_SYSCOMMAND, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
 
 const VK_CONTROL: u8 = 0x11;
@@ -64,7 +66,11 @@ pub fn focus_window(h: isize) {
         let foreground_thread = GetWindowThreadProcessId(GetForegroundWindow(), None);
         let me = GetCurrentThreadId();
         let _ = AttachThreadInput(me, foreground_thread, true);
+        // Any key input lifts Windows' foreground lock. A bare Alt tap would also put the window into
+        // menu mode, which freezes its drawing until the next click, so a dummy key goes in between.
         key(VK_MENU, false);
+        key(VK_UNASSIGNED, false);
+        key(VK_UNASSIGNED, true);
         key(VK_MENU, true);
         let _ = BringWindowToTop(hwnd(h));
         let _ = SetForegroundWindow(hwnd(h));
@@ -125,6 +131,34 @@ pub fn work_area_cursor() -> (i32, i32, i32, i32) {
         } else {
             work_area(None)
         }
+    }
+}
+
+/// Releasing Alt on one of our windows would put it into Windows' "menu mode", in which it stops
+/// redrawing until the next click (the app looks frozen). Our windows have no menu, so it is switched off.
+pub fn block_menu_mode(h: isize) {
+    unsafe extern "system" fn proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
+        if msg == WM_SYSCOMMAND && (wp.0 & 0xFFF0) == SC_KEYMENU as usize {
+            return LRESULT(0);
+        }
+        unsafe { DefSubclassProc(h, msg, wp, lp) }
+    }
+    unsafe {
+        let _ = SetWindowSubclass(hwnd(h), Some(proc), 0x4E58, 0);
+    }
+}
+
+/// Opacity of the whole window as one picture (0..1), applied by Windows. Unlike per-element
+/// opacity, darker parts such as the input field do not end up less transparent than the rest.
+/// The toolkit resets the window's extended style when it is shown, so this is applied after each show.
+pub fn set_window_alpha(h: isize, alpha: f32) {
+    unsafe {
+        let cur = GetWindowLongPtrW(hwnd(h), GWL_EXSTYLE) as u32;
+        if cur & WS_EX_LAYERED.0 == 0 {
+            SetWindowLongPtrW(hwnd(h), GWL_EXSTYLE, (cur | WS_EX_LAYERED.0) as isize);
+        }
+        let a = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+        let _ = SetLayeredWindowAttributes(hwnd(h), COLORREF(0), a, LWA_ALPHA);
     }
 }
 

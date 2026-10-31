@@ -114,6 +114,8 @@ struct App {
     picker_src: Option<(u32, u32, Vec<u8>)>,
     picker_ctx: (u64, bool),
     toast_gen: u64,
+    save_gen: u64,
+    tray: Option<tray_icon::TrayIcon>,
 
     hot_mgr: GlobalHotKeyManager,
     registered: Vec<HotKey>,
@@ -167,6 +169,30 @@ fn hwnd_of(w: &slint::Window) -> Option<isize> {
         RawWindowHandle::Win32(h) => Some(h.hwnd.get()),
         _ => None,
     }
+}
+
+/// The user's own accent colour, with dark or white ink depending on how light it is.
+fn set_custom_theme(theme: &Theme, (r, g, b): (u8, u8, u8)) {
+    theme.set_custom_accent(slint::Color::from_rgb_u8(r, g, b));
+    let lum = 0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32;
+    theme.set_custom_ink(if lum > 140.0 { slint::Color::from_rgb_u8(0x15, 0x15, 0x15) } else { slint::Color::from_rgb_u8(0xff, 0xff, 0xff) });
+}
+
+/// Hue in degrees, saturation and value 0..1 (the palette's coordinates).
+fn rgb_to_hsv((r, g, b): (u8, u8, u8)) -> (f32, f32, f32) {
+    let (r, g, b) = (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+    let max = r.max(g).max(b);
+    let d = max - r.min(g).min(b);
+    let h = if d == 0.0 {
+        0.0
+    } else if max == r {
+        60.0 * ((g - b) / d).rem_euclid(6.0)
+    } else if max == g {
+        60.0 * ((b - r) / d + 2.0)
+    } else {
+        60.0 * ((r - g) / d + 4.0)
+    };
+    (h, if max == 0.0 { 0.0 } else { d / max }, max)
 }
 
 /// "сегодня, 14:05", "вчера, 09:30", "28.10, 18:00" or "28.10.2025".
@@ -298,6 +324,7 @@ impl App {
             self.tick_timer.start(TimerMode::Repeated, Duration::from_millis(120), || with_app(|a| a.tick()));
         }
         self.apply_window_mode(overlay);
+        self.apply_alpha();
         if !self.visible {
             self.visible = true;
             if self.placed {
@@ -329,6 +356,7 @@ impl App {
         let ui = self.ui();
         if let Some(h) = self.hwnd() {
             native::set_no_activate(h, overlay);
+            native::block_menu_mode(h);
         }
         ui.window().with_winit_window(|w| {
             let _ = w.set_cursor_hittest(!overlay);
@@ -343,7 +371,7 @@ impl App {
             let (w, h) = ((OVERLAY_SIZE.0 * scale) as u32, (OVERLAY_SIZE.1 * scale) as u32);
             let m = (16.0 * scale) as i32;
             self.apply_rect(clamp_rect(Rect { x: wa.0 + wa.2 - w as i32 - m, y: wa.1 + wa.3 - h as i32 - m, w, h }, wa));
-            ui.set_win_opacity(self.cfg.opacity());
+            ui.set_win_opacity(1.0);
             return;
         } else {
             let wa = native::work_area(self.hwnd());
@@ -358,7 +386,78 @@ impl App {
             clamp_rect(r, wa)
         };
         self.apply_rect(r);
-        ui.set_win_opacity(self.cfg.opacity());
+        ui.set_win_opacity(1.0);
+    }
+
+    fn apply_tray(&self) {
+        if let Some(t) = &self.tray {
+            if let Err(e) = t.set_visible(!self.cfg.hide_tray) {
+                log_err(&format!("tray: {e}"));
+            }
+        }
+    }
+
+    /// The opacity setting is applied to the window as a whole (see native::set_window_alpha).
+    fn apply_alpha(&self) {
+        if let Some(h) = self.hwnd() {
+            native::set_window_alpha(h, self.cfg.opacity());
+        }
+    }
+
+    /// The slider takes effect and is saved at once, like the theme, so no way of leaving the
+    /// settings can bring back an older value.
+    fn set_opacity(&mut self, pct: f32) {
+        let v = (pct.round() / 100.0).clamp(config::MIN_OPACITY, 1.0);
+        if self.cfg.opacity == Some(v) {
+            return;
+        }
+        self.cfg.opacity = Some(v);
+        self.apply_alpha();
+        self.save_soon();
+    }
+
+    /// Saves the settings once the user stops dragging a slider or the palette, not on every step.
+    fn save_soon(&mut self) {
+        self.save_gen += 1;
+        let gen = self.save_gen;
+        Timer::single_shot(Duration::from_millis(400), move || {
+            with_app(|a| {
+                if a.save_gen == gen {
+                    config::save(&a.store, &a.cfg);
+                }
+            })
+        });
+    }
+
+    /// A colour from the palette: becomes the accent, and the HEX field shows it.
+    fn custom_color_picked(&mut self, c: slint::Color) {
+        let rgb = (c.red(), c.green(), c.blue());
+        self.ui().set_custom_text(config::hex_color(rgb).into());
+        self.use_custom(rgb);
+    }
+
+    /// Typed into the HEX/RGB field: applied as soon as it reads as a colour.
+    fn custom_text_edited(&mut self, text: &str) {
+        let Some(rgb) = config::parse_color(text) else { return };
+        let ui = self.ui();
+        let (h, s, v) = rgb_to_hsv(rgb);
+        if s > 0.0 && v > 0.0 {
+            ui.set_custom_h(h); // grey has no hue: the strip keeps its place
+        }
+        if v > 0.0 {
+            ui.set_custom_s(s);
+        }
+        ui.set_custom_v(v);
+        self.use_custom(rgb);
+    }
+
+    fn use_custom(&mut self, rgb: (u8, u8, u8)) {
+        self.cfg.accent_custom = config::hex_color(rgb);
+        self.cfg.accent = "custom".into();
+        let ui = self.ui();
+        set_custom_theme(&ui.global::<Theme>(), rgb);
+        ui.global::<Theme>().set_accent_name("custom".into());
+        self.save_soon();
     }
 
     fn force_focus(&self) {
@@ -1043,6 +1142,7 @@ impl App {
                 return;
             }
         };
+        set_custom_theme(&win.global::<Theme>(), self.cfg.custom_rgb());
         win.global::<Theme>().set_accent_name(self.cfg.accent().into());
         win.set_shot(make_image(w, h, &px));
         win.set_img_w(w as f32);
@@ -1058,6 +1158,7 @@ impl App {
         let place = move |win: &SnipWindow| {
             // exact physical placement over the monitor (the toolkit may rescale its own sizes)
             if let Some(hw) = hwnd_of(win.window()) {
+                native::block_menu_mode(hw);
                 native::set_window_rect(hw, x, y, w, h);
                 native::focus_window(hw);
             }
@@ -1161,6 +1262,15 @@ impl App {
         ui.set_overlay_mode(self.cfg.overlay_mode);
         ui.set_shot_mode(self.cfg.shot_mode_index() as i32);
         ui.set_shot_hotkey(self.cfg.hotkeys().screenshot.into());
+        ui.set_free_hotkey(self.cfg.hotkeys().free.into());
+        ui.set_show_tray(!self.cfg.hide_tray);
+        let rgb = self.cfg.custom_rgb();
+        let (h, s, v) = rgb_to_hsv(rgb);
+        ui.set_custom_h(h);
+        ui.set_custom_s(s);
+        ui.set_custom_v(v);
+        ui.set_custom_text(config::hex_color(rgb).into());
+        ui.set_custom_open(false);
         ui.set_theme_index(if self.cfg.dark() { 0 } else { 1 });
         ui.set_auto_update(!self.cfg.no_update_check);
         ui.set_version_text(format!("Версия {}", update::VERSION).into());
@@ -1280,6 +1390,7 @@ impl App {
         self.cfg.shot_mode = SHOT_MODES[shot].to_string();
         self.cfg.full_screenshot = shot == 1;
         self.cfg.no_update_check = !ui.get_auto_update();
+        self.cfg.hide_tray = !ui.get_show_tray();
         self.auto_update.store(!self.cfg.no_update_check, Ordering::SeqCst);
         self.cfg.opacity = Some(input.opacity as f32 / 100.0);
         self.cfg.prompt = input.prompt.clone();
@@ -1290,13 +1401,15 @@ impl App {
         if let Err(e) = native::set_autostart(input.autostart) {
             log_err(&format!("autostart: {e}"));
         }
-        ui.set_win_opacity(self.cfg.opacity());
+        self.apply_alpha();
+        self.apply_tray();
         self.key_drafts = [String::new(), String::new()];
         ui.set_api_key("".into());
         self.active_provider = ui.get_provider_index() as usize;
         self.update_provider_ui();
 
         ui.set_shot_hotkey(self.cfg.hotkeys().screenshot.into());
+        ui.set_free_hotkey(self.cfg.hotkeys().free.into());
         let failed = self.register_hotkeys();
         if !failed.is_empty() {
             // the settings are saved anyway; say which keys did not work instead of keeping the panel open
@@ -1530,10 +1643,10 @@ fn main() {
     {
         let theme = ui.global::<Theme>();
         theme.set_dark(cfg.dark());
+        set_custom_theme(&theme, cfg.custom_rgb());
         theme.set_accent_name(cfg.accent().into());
     }
     ui.invoke_sync_palette();
-    ui.set_win_opacity(cfg.opacity());
 
     let hot_mgr = match GlobalHotKeyManager::new() {
         Ok(m) => m,
@@ -1583,6 +1696,8 @@ fn main() {
         picker_src: None,
         picker_ctx: (0, false),
         toast_gen: 0,
+        save_gen: 0,
+        tray: None,
         hot_mgr,
         registered: Vec::new(),
         hot_ids: HashMap::new(),
@@ -1645,16 +1760,11 @@ fn main() {
     ui.on_remove_image(|i| with_app(|a| a.remove_image(i.max(0) as usize)));
     ui.on_history_selected(|i| with_app(|a| a.history_selected(i.max(0) as usize)));
     ui.on_provider_changed(|i| with_app(|a| a.provider_changed(i.max(0) as usize)));
-    ui.on_opacity_changed({
-        let weak = ui.as_weak();
-        move |v| {
-            if let Some(ui) = weak.upgrade() {
-                ui.set_win_opacity((v / 100.0).clamp(config::MIN_OPACITY, 1.0));
-            }
-        }
-    });
+    ui.on_opacity_changed(|v| with_app(|a| a.set_opacity(v)));
     ui.on_theme_picked(|i| with_app(|a| a.set_theme(i == 0)));
     ui.on_accent_picked(|name| with_app(|a| a.pick_accent(&name)));
+    ui.on_custom_color_picked(|c| with_app(|a| a.custom_color_picked(c)));
+    ui.on_custom_text_edited(|t| with_app(|a| a.custom_text_edited(&t)));
     ui.on_hotkey_key(|i, t, c, al, s, m| with_app(|a| a.hotkey_key(i.clamp(0, 3) as usize, &t, c, al, s, m)));
     ui.on_hotkey_cancelled({
         let weak = ui.as_weak();
@@ -1704,7 +1814,7 @@ fn main() {
     let tray_image = image::load_from_memory(include_bytes!("../ui/icon.png"))
         .map(|i| image::imageops::resize(&i.to_rgba8(), 32, 32, image::imageops::FilterType::Lanczos3))
         .expect("embedded icon decodes");
-    let _tray = tray_icon::Icon::from_rgba(tray_image.into_raw(), 32, 32)
+    let tray = tray_icon::Icon::from_rgba(tray_image.into_raw(), 32, 32)
         .map_err(|e| e.to_string())
         .and_then(|icon| {
             TrayIconBuilder::new()
@@ -1717,6 +1827,11 @@ fn main() {
         })
         .map_err(|e| log_err(&format!("tray icon: {e}")))
         .ok();
+    {
+        let mut a = app.borrow_mut();
+        a.tray = tray;
+        a.apply_tray();
+    }
     let (open_id, settings_id, quit_id) = (open_item.id().clone(), settings_item.id().clone(), quit_item.id().clone());
 
     // Hotkey and tray events arrive on the UI thread through the Win32 message loop; forward each
