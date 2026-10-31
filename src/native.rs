@@ -140,6 +140,11 @@ pub fn set_no_activate(h: isize, enabled: bool) {
 /// Captures the whole monitor under the cursor (physical pixels) as RGBA. No window is shown for it,
 /// so a full-screen game is not minimised. Exclusive-fullscreen games may come back black.
 pub fn capture_cursor_monitor() -> Option<(u32, u32, Vec<u8>)> {
+    capture_cursor_monitor_rect().map(|(_, _, w, h, px)| (w, h, px))
+}
+
+/// Same as `capture_cursor_monitor`, plus where that monitor is: (x, y, w, h, RGBA).
+pub fn capture_cursor_monitor_rect() -> Option<(i32, i32, u32, u32, Vec<u8>)> {
     unsafe {
         let mut p = POINT::default();
         GetCursorPos(&mut p).ok()?;
@@ -183,7 +188,7 @@ pub fn capture_cursor_monitor() -> Option<(u32, u32, Vec<u8>)> {
             px.swap(0, 2); // BGRA -> RGBA
             px[3] = 255;
         }
-        Some((w as u32, h as u32, pixels))
+        Some((r.left, r.top, w as u32, h as u32, pixels))
     }
 }
 

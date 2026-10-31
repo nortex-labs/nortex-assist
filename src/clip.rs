@@ -97,6 +97,20 @@ pub fn clipboard_image() -> Option<Shot> {
     prepare_shot(img.width as u32, img.height as u32, img.bytes.into_owned())
 }
 
+/// Cuts a part out of an RGBA image; `f` is (x, y, width, height) as fractions of the image.
+pub fn crop_rgba(w: u32, h: u32, px: &[u8], f: [f32; 4]) -> (u32, u32, Vec<u8>) {
+    let x0 = ((f[0].clamp(0.0, 1.0) * w as f32).round() as u32).min(w.saturating_sub(1));
+    let y0 = ((f[1].clamp(0.0, 1.0) * h as f32).round() as u32).min(h.saturating_sub(1));
+    let cw = ((f[2].clamp(0.0, 1.0) * w as f32).round() as u32).clamp(1, w - x0);
+    let ch = ((f[3].clamp(0.0, 1.0) * h as f32).round() as u32).clamp(1, h - y0);
+    let mut out = Vec::with_capacity((cw * ch * 4) as usize);
+    for row in y0..y0 + ch {
+        let start = ((row * w + x0) * 4) as usize;
+        out.extend_from_slice(&px[start..start + (cw * 4) as usize]);
+    }
+    (cw, ch, out)
+}
+
 pub fn thumbnail(width: u32, height: u32, rgba: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     let img = RgbaImage::from_raw(width, height, rgba.to_vec())?;
     let t = DynamicImage::ImageRgba8(img).thumbnail(160, 160).to_rgba8();
@@ -128,4 +142,21 @@ pub fn snip(token: &AtomicU64, my: u64) -> Option<(u32, u32, Vec<u8>)> {
         restore(prev);
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crop_takes_the_selected_part() {
+        // 4x2 image whose pixel value is its index
+        let px: Vec<u8> = (0..8u8).flat_map(|i| [i, i, i, 255]).collect();
+        let (w, h, out) = crop_rgba(4, 2, &px, [0.5, 0.5, 0.5, 0.5]);
+        assert_eq!((w, h), (2, 1));
+        assert_eq!(out, vec![6, 6, 6, 255, 7, 7, 7, 255]);
+        // the whole image, and a selection hanging over the edge stays inside
+        assert_eq!(crop_rgba(4, 2, &px, [0.0, 0.0, 1.0, 1.0]).2, px);
+        assert_eq!(crop_rgba(4, 2, &px, [0.9, 0.9, 0.9, 0.9]).0, 1);
+    }
 }

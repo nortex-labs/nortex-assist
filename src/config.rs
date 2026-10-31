@@ -11,6 +11,7 @@ pub const GROQ_MODEL: &str = "qwen/qwen3.8-27b";
 /// Lowest window opacity (10 %): below this the window is too easy to lose.
 pub const MIN_OPACITY: f32 = 0.10;
 pub const MAX_PROMPT: usize = 8000;
+pub const SHOT_MODES: [&str; 3] = ["select", "full", "snip"];
 pub const HOTKEY_NAMES: [&str; 4] = ["selection", "screenshot", "free", "retry"];
 
 // `default` keeps configs saved before the retry hotkey existed readable.
@@ -70,6 +71,8 @@ pub struct Config {
     pub overlay_mode: bool,
     /// Screenshot hotkey grabs the whole monitor at once instead of opening the Windows snipping tool.
     pub full_screenshot: bool,
+    /// Screenshot hotkey: "select" (own area picker), "full" (whole monitor) or "snip" (Windows snipping tool).
+    pub shot_mode: String,
     /// Automatic update checks are on unless this is set.
     pub no_update_check: bool,
     pub theme: String,
@@ -99,6 +102,17 @@ impl Config {
     pub fn accent(&self) -> &str {
         if ACCENTS.contains(&self.accent.as_str()) { &self.accent } else { "green" }
     }
+    /// 0 = own area picker, 1 = whole monitor, 2 = Windows snipping tool.
+    pub fn shot_mode_index(&self) -> usize {
+        match self.shot_mode.as_str() {
+            "select" => 0,
+            "full" => 1,
+            "snip" => 2,
+            // configs from before the choice existed
+            _ => if self.full_screenshot { 1 } else { 0 },
+        }
+    }
+
     pub fn has_key(&self) -> bool {
         if self.is_groq() { !self.groq_key.is_empty() } else { !self.gemini_key.is_empty() }
     }

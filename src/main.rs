@@ -9,7 +9,7 @@ mod logging;
 mod native;
 mod update;
 
-use config::{Config, Hotkeys, Rect, SettingsInput, ACCENTS, GROQ_MODEL, HOTKEY_NAMES};
+use config::{Config, Hotkeys, Rect, SettingsInput, ACCENTS, GROQ_MODEL, HOTKEY_NAMES, SHOT_MODES};
 use global_hotkey::hotkey::HotKey;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use history::History;
@@ -42,7 +42,8 @@ const OVERLAY_TIMEOUT: Duration = Duration::from_secs(20);
 // A saved model that is not in this list shows up as "own model" with its id filled in.
 const GEMINI_IDS: [&str; 4] = ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.1-pro-preview", "gemini-2.5-flash"];
 const CUSTOM_MODEL_INDEX: i32 = GEMINI_IDS.len() as i32;
-const HOTKEY_LABELS: [&str; 4] = ["Выделенный текст", "Скриншот", "Свободный вопрос / настройки", "Повторить запрос"];
+const HOTKEY_LABELS: [&str; 4] = ["Вопрос по выделенному тексту", "Скриншот", "Свободный вопрос", "Повторить запрос"];
+const TOAST_TIME: Duration = Duration::from_millis(4000);
 
 struct Answer {
     text: String,
@@ -108,6 +109,11 @@ struct App {
     watched: Option<(Rect, Instant)>,
     drag: Option<DragState>,
     snip_token: Arc<AtomicU64>,
+    /// own area picker while it is open, with the full screenshot it shows and (token, was_visible)
+    picker: Option<SnipWindow>,
+    picker_src: Option<(u32, u32, Vec<u8>)>,
+    picker_ctx: (u64, bool),
+    toast_gen: u64,
 
     hot_mgr: GlobalHotKeyManager,
     registered: Vec<HotKey>,
@@ -154,6 +160,32 @@ fn make_image(w: u32, h: u32, rgba: &[u8]) -> Image {
 fn question_line(q: &str) -> String {
     let flat = q.split_whitespace().collect::<Vec<_>>().join(" ");
     if flat.chars().count() > 200 { flat.chars().take(200).collect::<String>() + "…" } else { flat }
+}
+
+fn hwnd_of(w: &slint::Window) -> Option<isize> {
+    match w.window_handle().window_handle().ok()?.as_raw() {
+        RawWindowHandle::Win32(h) => Some(h.hwnd.get()),
+        _ => None,
+    }
+}
+
+/// "сегодня, 14:05", "вчера, 09:30", "28.10, 18:00" or "28.10.2025".
+fn when_text(ms: i64) -> String {
+    use chrono::Datelike;
+    let Some(d) = chrono::DateTime::from_timestamp_millis(ms) else { return String::new() };
+    let d = d.with_timezone(&chrono::Local);
+    let today = chrono::Local::now().date_naive();
+    let day = d.date_naive();
+    let hm = d.format("%H:%M");
+    if day == today {
+        format!("сегодня, {hm}")
+    } else if Some(day) == today.pred_opt() {
+        format!("вчера, {hm}")
+    } else if day.year() == today.year() {
+        d.format("%d.%m, %H:%M").to_string()
+    } else {
+        d.format("%d.%m.%Y").to_string()
+    }
 }
 
 fn first_line(s: &str) -> &str {
@@ -219,11 +251,7 @@ impl App {
 
     fn hwnd(&self) -> Option<isize> {
         let ui = self.ui.upgrade()?;
-        let handle = ui.window().window_handle();
-        match handle.window_handle().ok()?.as_raw() {
-            RawWindowHandle::Win32(h) => Some(h.hwnd.get()),
-            _ => None,
-        }
+        hwnd_of(ui.window())
     }
 
     fn window_rect(&self) -> Rect {
@@ -255,6 +283,16 @@ impl App {
         let mode_changed = self.overlay_view != overlay;
         self.overlay_view = overlay;
         ui.set_overlay_view(overlay);
+        if !self.visible {
+            // fade in: start from transparent, switch on a moment later so the change animates
+            ui.set_appear_on(false);
+            let weak = self.ui.clone();
+            Timer::single_shot(Duration::from_millis(20), move || {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_appear_on(true);
+                }
+            });
+        }
         let _ = ui.show();
         if !self.tick_timer.running() {
             self.tick_timer.start(TimerMode::Repeated, Duration::from_millis(120), || with_app(|a| a.tick()));
@@ -424,6 +462,23 @@ impl App {
         ui.set_prev_enabled(on && self.idx > 0);
         ui.set_next_enabled(on && self.idx + 1 < n);
         ui.set_retry_enabled(on && self.answers.get(self.idx).is_some_and(|a| a.req.is_some()));
+        // arrows only when there is something to flip through; retry/copy only over an answer
+        ui.set_nav_visible(on && n > 1);
+        ui.set_answer_tools(on && self.answers.get(self.idx).is_some());
+    }
+
+    /// Short notice at the bottom of the window that goes away by itself.
+    fn toast(&mut self, text: &str) {
+        self.toast_gen += 1;
+        let gen = self.toast_gen;
+        self.ui().set_toast_text(text.into());
+        Timer::single_shot(TOAST_TIME, move || {
+            with_app(|a| {
+                if a.toast_gen == gen {
+                    a.ui().set_toast_text("".into());
+                }
+            })
+        });
     }
 
     fn show_status(&mut self, text: &str) {
@@ -432,13 +487,19 @@ impl App {
         let ui = self.ui();
         ui.set_composer_on(false);
         ui.set_question_text("".into());
+        ui.set_hint_text("".into());
+        ui.set_thinking(false);
         ui.set_body_text(text.into());
         self.set_nav(false);
     }
 
     fn set_busy(&mut self, on: bool) {
         self.busy = on;
-        self.ui().set_busy(on);
+        let ui = self.ui();
+        ui.set_busy(on);
+        if !on {
+            ui.set_thinking(false);
+        }
     }
 
     fn render(&mut self) {
@@ -446,6 +507,8 @@ impl App {
         self.composer = None;
         let ui = self.ui();
         ui.set_composer_on(false);
+        ui.set_hint_text("".into());
+        ui.set_thinking(false);
         let Some(e) = self.answers.get(self.idx) else {
             ui.set_question_text("".into());
             ui.set_body_text("".into());
@@ -495,6 +558,8 @@ impl App {
         self.hide_hist();
         let ui = self.ui();
         ui.set_question_text("".into());
+        ui.set_hint_text("".into());
+        ui.set_thinking(false);
         ui.set_body_text(label.into());
         self.set_nav(false);
         ui.set_composer_placeholder(placeholder.into());
@@ -590,6 +655,7 @@ impl App {
         let id = self.req_id;
         self.show_status("Думаю…");
         self.ui().set_question_text(question_line(&history::describe(&req)).into());
+        self.ui().set_thinking(true); // dots until the first words arrive
         self.live_req.store(id, Ordering::SeqCst);
         self.streaming.clear();
         self.in_flight = Some((req.clone(), record_q.clone(), chat));
@@ -609,7 +675,9 @@ impl App {
     fn on_chunk(&mut self, id: u64, text: &str) {
         if id == self.req_id {
             self.streaming = text.to_string();
-            self.ui().set_body_text(text.into());
+            let ui = self.ui();
+            ui.set_thinking(false);
+            ui.set_body_text(text.into());
         }
     }
 
@@ -744,10 +812,7 @@ impl App {
             .list()
             .iter()
             .map(|e| {
-                let when = chrono::DateTime::from_timestamp_millis(e.t)
-                    .map(|d| d.with_timezone(&chrono::Local).format("%d.%m.%Y, %H:%M:%S").to_string())
-                    .unwrap_or_default();
-                HistItem { title: first_line(&e.q).into(), sub: format!("{when} - {}", first_line(&e.a)).into() }
+                HistItem { title: first_line(&e.q).into(), sub: format!("{} · {}", when_text(e.t), first_line(&e.a)).into() }
             })
             .collect();
         self.ui().set_history_items(ModelRc::new(VecModel::from(items)));
@@ -782,6 +847,8 @@ impl App {
         }
         if self.ui().get_settings_open() {
             self.ui().set_saved_text("История очищена".into());
+        } else {
+            self.toast("История очищена");
         }
     }
 
@@ -834,6 +901,13 @@ impl App {
         self.new_chat();
         let label = if self.cfg.has_key() { "Задай любой вопрос".to_string() } else { self.no_key_hint() };
         if self.show_composer(&label, Composer::Free, "Задай вопрос", false) {
+            let k = self.cfg.hotkeys();
+            let hint = if self.cfg.has_key() {
+                format!("{} — вопрос по выделенному тексту\n{} — скриншот\n{} — повторить последний запрос", k.selection, k.screenshot, k.retry)
+            } else {
+                "Шестерёнка вверху справа открывает настройки.".to_string()
+            };
+            self.ui().set_hint_text(hint.into());
             self.show_window();
         }
     }
@@ -894,15 +968,25 @@ impl App {
         if self.cfg.overlay_mode {
             return self.start_overlay_screenshot();
         }
+        if self.picker.is_some() {
+            return; // the area picker is already on screen
+        }
         let my = self.snip_token.fetch_add(1, Ordering::SeqCst) + 1;
         let was_visible = self.visible;
         if was_visible {
             self.hide_window();
         }
         let token = self.snip_token.clone();
-        let full = self.cfg.full_screenshot;
+        let mode = self.cfg.shot_mode_index();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(150));
+            if mode == 0 {
+                // freeze the screen now; the picker shows this picture while the user selects
+                let cap = native::capture_cursor_monitor_rect();
+                let _ = slint::invoke_from_event_loop(move || with_app(|a| a.open_picker(cap, my, was_visible)));
+                return;
+            }
+            let full = mode == 1;
             let raw = if full {
                 // our window is hidden by now, so it is not in the picture
                 native::capture_cursor_monitor()
@@ -927,16 +1011,91 @@ impl App {
                 self.refresh_thumbs();
                 let n = self.pending.len();
                 let label = if n == 1 { "Снимок экрана готов".to_string() } else { format!("Снимков экрана: {n}") };
-                if self.show_composer(&label, Composer::Shot, "Задай вопрос (нажми на миниатюру, чтобы убрать снимок)", true) {
+                if self.show_composer(&label, Composer::Shot, "Что сделать со снимком?", true) {
+                    let more = if n < MAX_SHOTS { format!("\n{} — добавить ещё снимок (до {MAX_SHOTS}).", self.cfg.hotkeys().screenshot) } else { String::new() };
+                    self.ui().set_hint_text(format!("Enter с пустым полем — модель решит задание со снимка.{more}").into());
                     self.show_window();
                 }
             }
-            None if self.cfg.full_screenshot => {
+            None if self.cfg.shot_mode_index() != 2 => {
                 self.show_status("Снимок экрана не удался.");
                 self.show_window();
             }
             None if was_visible => self.show_window(),
             None => {}
+        }
+    }
+
+    /// Own area picker: a full-screen window with the frozen screenshot; the user drags a rectangle.
+    fn open_picker(&mut self, cap: Option<(i32, i32, u32, u32, Vec<u8>)>, my: u64, was_visible: bool) {
+        if self.snip_token.load(Ordering::SeqCst) != my || self.picker.is_some() {
+            return;
+        }
+        let Some((x, y, w, h, px)) = cap else {
+            self.show_status("Снимок экрана не удался.");
+            self.show_window();
+            return;
+        };
+        let win = match SnipWindow::new() {
+            Ok(win) => win,
+            Err(e) => {
+                log_err(&format!("area picker: {e}"));
+                return;
+            }
+        };
+        win.global::<Theme>().set_accent_name(self.cfg.accent().into());
+        win.set_shot(make_image(w, h, &px));
+        win.set_img_w(w as f32);
+        win.set_img_h(h as f32);
+        win.window().set_position(slint::PhysicalPosition::new(x, y));
+        win.window().set_size(slint::PhysicalSize::new(w, h));
+        win.on_done(|fx, fy, fw, fh| with_app(|a| a.picker_closed(Some([fx, fy, fw, fh]))));
+        win.on_cancelled(|| with_app(|a| a.picker_closed(None)));
+        if let Err(e) = win.show() {
+            log_err(&format!("area picker show: {e}"));
+            return;
+        }
+        let place = move |win: &SnipWindow| {
+            // exact physical placement over the monitor (the toolkit may rescale its own sizes)
+            if let Some(hw) = hwnd_of(win.window()) {
+                native::set_window_rect(hw, x, y, w, h);
+                native::focus_window(hw);
+            }
+            win.invoke_grab_focus();
+        };
+        place(&win);
+        let weak = win.as_weak();
+        Timer::single_shot(Duration::from_millis(60), move || {
+            if let Some(win) = weak.upgrade() {
+                place(&win);
+            }
+        });
+        self.picker = Some(win);
+        self.picker_src = Some((w, h, px));
+        self.picker_ctx = (my, was_visible);
+    }
+
+    fn picker_closed(&mut self, sel: Option<[f32; 4]>) {
+        let Some(win) = self.picker.take() else { return };
+        let _ = win.hide();
+        // dropped a moment later: this runs inside the window's own callback
+        Timer::single_shot(Duration::from_millis(50), move || drop(win));
+        let src = self.picker_src.take();
+        let (my, was_visible) = self.picker_ctx;
+        match (sel, src) {
+            (Some(f), Some((w, h, px))) => {
+                std::thread::spawn(move || {
+                    let (cw, ch, cpx) = clip::crop_rgba(w, h, &px, f);
+                    let image = clip::prepare_shot(cw, ch, cpx);
+                    let _ = slint::invoke_from_event_loop(move || with_app(|a| a.finish_screenshot(image, my, was_visible)));
+                });
+            }
+            _ => {
+                if was_visible {
+                    self.show_window();
+                }
+                Self::trim_memory_soon();
+            }
         }
     }
 
@@ -1000,7 +1159,9 @@ impl App {
         ui.set_autostart(self.cfg.autostart);
         ui.set_history_enabled(self.cfg.history_on());
         ui.set_overlay_mode(self.cfg.overlay_mode);
-        ui.set_full_screenshot(self.cfg.full_screenshot);
+        ui.set_shot_mode(self.cfg.shot_mode_index() as i32);
+        ui.set_shot_hotkey(self.cfg.hotkeys().screenshot.into());
+        ui.set_theme_index(if self.cfg.dark() { 0 } else { 1 });
         ui.set_auto_update(!self.cfg.no_update_check);
         ui.set_version_text(format!("Версия {}", update::VERSION).into());
         ui.set_update_status("".into());
@@ -1115,7 +1276,9 @@ impl App {
         self.cfg.history = Some(input.history);
         self.cfg.autostart = input.autostart;
         self.cfg.overlay_mode = ui.get_overlay_mode();
-        self.cfg.full_screenshot = ui.get_full_screenshot();
+        let shot = (ui.get_shot_mode().max(0) as usize).min(SHOT_MODES.len() - 1);
+        self.cfg.shot_mode = SHOT_MODES[shot].to_string();
+        self.cfg.full_screenshot = shot == 1;
         self.cfg.no_update_check = !ui.get_auto_update();
         self.auto_update.store(!self.cfg.no_update_check, Ordering::SeqCst);
         self.cfg.opacity = Some(input.opacity as f32 / 100.0);
@@ -1133,9 +1296,14 @@ impl App {
         self.active_provider = ui.get_provider_index() as usize;
         self.update_provider_ui();
 
+        ui.set_shot_hotkey(self.cfg.hotkeys().screenshot.into());
         let failed = self.register_hotkeys();
         if !failed.is_empty() {
-            return fail(&format!("Клавиши заняты другой программой или неверны: {}", failed.join(", ")));
+            // the settings are saved anyway; say which keys did not work instead of keeping the panel open
+            let msg = format!("Клавиши заняты другой программой: {}. Поменяй их в настройках.", failed.join(", "));
+            ui.set_saved_text(msg.as_str().into());
+            self.toast(&msg);
+            return true;
         }
         ui.set_saved_text("Сохранено".into());
         true
@@ -1411,6 +1579,10 @@ fn main() {
         watched: None,
         drag: None,
         snip_token: Arc::new(AtomicU64::new(0)),
+        picker: None,
+        picker_src: None,
+        picker_ctx: (0, false),
+        toast_gen: 0,
         hot_mgr,
         registered: Vec::new(),
         hot_ids: HashMap::new(),
@@ -1481,10 +1653,7 @@ fn main() {
             }
         }
     });
-    ui.on_toggle_theme(|| with_app(|a| {
-        let dark = a.cfg.dark();
-        a.set_theme(!dark);
-    }));
+    ui.on_theme_picked(|i| with_app(|a| a.set_theme(i == 0)));
     ui.on_accent_picked(|name| with_app(|a| a.pick_accent(&name)));
     ui.on_hotkey_key(|i, t, c, al, s, m| with_app(|a| a.hotkey_key(i.clamp(0, 3) as usize, &t, c, al, s, m)));
     ui.on_hotkey_cancelled({
