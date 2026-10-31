@@ -1,4 +1,4 @@
-import { ComboBox, ScrollView, ListView } from "std-widgets.slint";
+import { ComboBox, ScrollView, ListView, TextEdit, Palette } from "std-widgets.slint";
 
 export struct ThumbItem { img: image }
 export struct HistItem { title: string, sub: string }
@@ -82,6 +82,60 @@ component ActionButton inherits Rectangle {
         vertical-alignment: center;
     }
     ta := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Destructive action: the first click arms it, the second (within 3 s) confirms.
+component ConfirmButton inherits Rectangle {
+    in property <string> text;
+    in property <string> confirm-text: "Точно удалить?";
+    callback confirmed();
+    property <bool> armed: false;
+    property <color> danger: Theme.dark ? #ff8179 : #d65350;
+    height: 30px;
+    min-width: 70px;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: armed ? danger : Theme.line-strong;
+    background: armed ? danger.with-alpha(0.14) : (ta.has-hover ? Theme.line : transparent);
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        Text {
+            text: root.armed ? root.confirm-text : root.text;
+            color: root.armed ? root.danger : Theme.fg;
+            font-size: 12px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => {
+            if (root.armed) {
+                root.armed = false;
+                root.confirmed();
+            } else {
+                root.armed = true;
+            }
+        }
+    }
+    Timer {
+        interval: 3s;
+        running: root.armed;
+        triggered => { root.armed = false; }
+    }
+}
+
+// Small text link used in the settings.
+component LinkText inherits Text {
+    callback clicked();
+    color: Theme.accent;
+    font-size: 11px;
+    TouchArea {
         mouse-cursor: MouseCursor.pointer;
         clicked => { root.clicked(); }
     }
@@ -310,6 +364,8 @@ export component MainWindow inherits Window {
 
     // answer area
     in property <string> body-text;
+    in property <string> question-text;
+    in property <bool> busy;
     in property <string> pos-text;
     in property <bool> prev-enabled;
     in property <bool> next-enabled;
@@ -340,6 +396,9 @@ export component MainWindow inherits Window {
     in-out property <bool> history-enabled;
     in-out property <bool> overlay-mode;
     in property <string> saved-text;
+    in-out property <string> prompt-text;
+    in property <string> key-check-text;
+    in property <bool> key-check-ok: true;
     in property <[string]> hotkey-labels;
     in property <[string]> hotkey-values;
     property <[string]> gemini-models: [
@@ -360,6 +419,9 @@ export component MainWindow inherits Window {
     callback prev();
     callback next();
     callback retry();
+    callback stop();
+    callback check-key();
+    callback prompt-preset(int);
     callback copy();
     callback toggle-history();
     callback clear-history();
@@ -387,6 +449,8 @@ export component MainWindow inherits Window {
 
     public function focus-input() { inp.focus(); }
     public function focus-root() { root-scope.focus(); }
+    // std widgets (combo boxes, the prompt editor) follow the app theme, not the Windows one
+    public function sync-palette() { Palette.color-scheme = Theme.dark ? ColorScheme.dark : ColorScheme.light; }
 
     root-scope := FocusScope {
         key-pressed(e) => {
@@ -397,7 +461,7 @@ export component MainWindow inherits Window {
             return reject;
         }
         capture-key-pressed(e) => {
-            if (root.composer-on && e.modifiers.control && (e.text == "v" || e.text == "V" || e.text == "м" || e.text == "М")) {
+            if (root.composer-on && !root.settings-open && e.modifiers.control && (e.text == "v" || e.text == "V" || e.text == "м" || e.text == "М")) {
                 if (root.paste-image()) { return accept; }
             }
             return reject;
@@ -436,10 +500,10 @@ export component MainWindow inherits Window {
                         Text { text: root.pos-text; color: Theme.muted; font-size: 11px; vertical-alignment: center; horizontal-alignment: center; min-width: 34px; }
                         IconButton { icon: @image-url("icons/right.svg"); enabled: root.next-enabled; clicked => { root.next(); } }
                         Rectangle { width: 8px; }
-                        IconButton { icon: @image-url("icons/retry.svg"); enabled: root.retry-enabled; clicked => { root.retry(); } }
+                        if !root.busy: IconButton { icon: @image-url("icons/retry.svg"); enabled: root.retry-enabled; clicked => { root.retry(); } }
+                        if root.busy: IconButton { icon: @image-url("icons/stop.svg"); active: true; clicked => { root.stop(); } }
                         IconButton { icon: @image-url("icons/copy.svg"); active: root.copy-done; clicked => { root.copy(); } }
                         Rectangle { horizontal-stretch: 1; }
-                        IconButton { icon: @image-url("icons/trash.svg"); clicked => { root.clear-history(); } }
                         IconButton { icon: @image-url("icons/history.svg"); active: root.history-open; clicked => { root.toggle-history(); } }
                         IconButton { icon: @image-url("icons/settings.svg"); active: root.settings-open; clicked => { root.toggle-settings(); } }
                         IconButton { icon: @image-url("icons/pin.svg"); active: root.pinned; clicked => { root.toggle-pin(); } }
@@ -473,11 +537,34 @@ export component MainWindow inherits Window {
                         padding-right: 16px;
                         padding-top: 4px;
                         padding-bottom: 12px;
-                        Text {
-                            text: root.body-text;
+                        spacing: 8px;
+                        if root.question-text != "": Text {
+                            text: root.question-text;
                             wrap: TextWrap.word-wrap;
-                            color: Theme.fg;
-                            font-size: 14px;
+                            color: Theme.muted;
+                            font-size: 12px;
+                        }
+                        // read-only input: the answer can be selected with the mouse and copied in part
+                        FocusScope {
+                            capture-key-pressed(e) => {
+                                if (e.modifiers.control && !e.modifiers.alt) {
+                                    if (e.text == "с" || e.text == "С") { body.copy(); return accept; }
+                                    if (e.text == "ф" || e.text == "Ф") { body.select-all(); return accept; }
+                                }
+                                return reject;
+                            }
+                            VerticalLayout {
+                                body := TextInput {
+                                    text: root.body-text;
+                                    read-only: true;
+                                    single-line: false;
+                                    wrap: TextWrap.word-wrap;
+                                    color: Theme.fg;
+                                    selection-background-color: Theme.accent.with-alpha(0.35);
+                                    selection-foreground-color: Theme.fg;
+                                    font-size: 14px;
+                                }
+                            }
                         }
                     }
                 }
@@ -489,7 +576,15 @@ export component MainWindow inherits Window {
                     padding-top: 4px;
                     spacing: 8px;
                     Text { text: "ПОСЛЕДНИЕ ДИАЛОГИ"; color: Theme.accent; font-size: 9px; font-weight: 700; }
-                    Text { text: "История"; color: Theme.fg; font-size: 17px; font-weight: 700; }
+                    HorizontalLayout {
+                        Text { text: "История"; color: Theme.fg; font-size: 17px; font-weight: 700; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                        if root.history-items.length > 0: ConfirmButton {
+                            text: "Очистить";
+                            confirm-text: "Удалить всё?";
+                            confirmed => { root.clear-history(); }
+                        }
+                    }
                     if root.history-items.length == 0: Text { text: "Пока пусто"; color: Theme.muted; }
                     ListView {
                         vertical-stretch: 1;
@@ -570,19 +665,65 @@ export component MainWindow inherits Window {
                                     text <=> root.api-key;
                                     placeholder: root.api-key-placeholder;
                                 }
-                                Text {
-                                    text: root.api-key-link-text;
-                                    color: Theme.accent;
-                                    font-size: 11px;
-                                    TouchArea {
-                                        mouse-cursor: MouseCursor.pointer;
-                                        clicked => { root.open-key-link(); }
-                                    }
+                                HorizontalLayout {
+                                    spacing: 14px;
+                                    alignment: start;
+                                    LinkText { text: root.api-key-link-text; clicked => { root.open-key-link(); } }
+                                    LinkText { text: "Проверить ключ"; clicked => { root.check-key(); } }
+                                }
+                                if root.key-check-text != "": Label {
+                                    text: root.key-check-text;
+                                    color: root.key-check-ok ? Theme.muted : (Theme.dark ? #ff8179 : #d65350);
+                                    wrap: TextWrap.word-wrap;
                                 }
                             }
 
                             Card {
                                 index: "02";
+                                title: "Стиль ответов";
+                                Label { text: "Заготовки"; }
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    alignment: start;
+                                    ActionButton { text: "Только ответ"; clicked => { root.prompt-preset(0); } }
+                                    ActionButton { text: "С пояснением"; clicked => { root.prompt-preset(1); } }
+                                    ActionButton { text: "Подробно"; clicked => { root.prompt-preset(2); } }
+                                }
+                                Label { text: "Промпт, который получает нейросеть (можно переписать своими словами, в том числе по-русски)"; wrap: TextWrap.word-wrap; }
+                                FocusScope {
+                                    capture-key-pressed(e) => {
+                                        if (e.modifiers.control && !e.modifiers.alt) {
+                                            if (e.text == "м" || e.text == "М") { pe.paste(); return accept; }
+                                            if (e.text == "ф" || e.text == "Ф") { pe.select-all(); return accept; }
+                                            if (e.text == "с" || e.text == "С") { pe.copy(); return accept; }
+                                            if (e.text == "ч" || e.text == "Ч") { pe.cut(); return accept; }
+                                        }
+                                        return reject;
+                                    }
+                                    VerticalLayout {
+                                        pe := TextEdit {
+                                            height: 150px;
+                                            font-size: 12px;
+                                            wrap: TextWrap.word-wrap;
+                                            text <=> root.prompt-text;
+                                        }
+                                    }
+                                }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Label {
+                                        text: "Изменённый промпт действует и в режиме поверх игр. Сохраняется кнопкой «Готово».";
+                                        font-size: 10px;
+                                        wrap: TextWrap.word-wrap;
+                                        horizontal-stretch: 1;
+                                        vertical-alignment: center;
+                                    }
+                                    ActionButton { text: "Сбросить"; clicked => { root.prompt-preset(0); } }
+                                }
+                            }
+
+                            Card {
+                                index: "03";
                                 title: "Окно и внешний вид";
                                 Label { text: "Прозрачность окна: " + Math.round(root.opacity-pct) + "%"; }
                                 OpacitySlider {
@@ -609,7 +750,7 @@ export component MainWindow inherits Window {
                             }
 
                             Card {
-                                index: "03";
+                                index: "04";
                                 title: "Поведение";
                                 Check { label: "Запускать вместе с Windows"; checked <=> root.autostart; }
                                 Check { label: "Сохранять зашифрованную историю"; checked <=> root.history-enabled; }
@@ -622,7 +763,7 @@ export component MainWindow inherits Window {
                             }
 
                             Card {
-                                index: "04";
+                                index: "05";
                                 title: "Горячие клавиши";
                                 for label[i] in root.hotkey-labels: HorizontalLayout {
                                     spacing: 8px;
@@ -637,7 +778,7 @@ export component MainWindow inherits Window {
                                     spacing: 8px;
                                     alignment: start;
                                     ActionButton { text: "По умолчанию"; clicked => { root.reset-hotkeys(); } }
-                                    ActionButton { text: "Очистить историю"; clicked => { root.clear-history(); } }
+                                    ConfirmButton { text: "Очистить историю"; confirm-text: "Удалить всю историю?"; confirmed => { root.clear-history(); } }
                                 }
                             }
                         }

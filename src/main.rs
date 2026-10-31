@@ -59,6 +59,8 @@ struct Answer {
     chat: Option<u64>,
     is_error: bool,
     record_q: Option<String>,
+    /// what was asked, shown above the answer
+    question: String,
 }
 
 struct DragState {
@@ -84,6 +86,12 @@ struct App {
     answers: Vec<Answer>,
     idx: usize,
     req_id: u64,
+    /// id of the request whose answer is still awaited (0: none); the worker thread stops when it changes
+    live_req: Arc<AtomicU64>,
+    busy: bool,
+    streaming: String,
+    in_flight: Option<(Request, Option<String>, Option<u64>)>,
+    key_check_id: u64,
     chat_id: u64,
     chat: Vec<Turn>,
     composer: Option<Composer>,
@@ -144,6 +152,12 @@ fn record_turn(chat: &mut Vec<Turn>, q: &str, a: &str) {
 
 fn make_image(w: u32, h: u32, rgba: &[u8]) -> Image {
     Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(rgba, w, h))
+}
+
+/// One-line, length-limited form of a question for the line above the answer.
+fn question_line(q: &str) -> String {
+    let flat = q.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() > 200 { flat.chars().take(200).collect::<String>() + "…" } else { flat }
 }
 
 fn first_line(s: &str) -> &str {
@@ -407,8 +421,14 @@ impl App {
         self.composer = None;
         let ui = self.ui();
         ui.set_composer_on(false);
+        ui.set_question_text("".into());
         ui.set_body_text(text.into());
         self.set_nav(false);
+    }
+
+    fn set_busy(&mut self, on: bool) {
+        self.busy = on;
+        self.ui().set_busy(on);
     }
 
     fn render(&mut self) {
@@ -417,10 +437,12 @@ impl App {
         let ui = self.ui();
         ui.set_composer_on(false);
         let Some(e) = self.answers.get(self.idx) else {
+            ui.set_question_text("".into());
             ui.set_body_text("".into());
             self.set_nav(true);
             return;
         };
+        ui.set_question_text(question_line(&e.question).into());
         ui.set_body_text(e.text.as_str().into());
         let follow_up = !self.overlay_view && e.chat == Some(self.chat_id) && self.idx + 1 == self.answers.len();
         self.set_nav(true);
@@ -462,6 +484,7 @@ impl App {
         }
         self.hide_hist();
         let ui = self.ui();
+        ui.set_question_text("".into());
         ui.set_body_text(label.into());
         self.set_nav(false);
         ui.set_composer_placeholder(placeholder.into());
@@ -552,26 +575,55 @@ impl App {
             self.pending_shots.clear();
         }
         self.show_status("Думаю…");
+        self.ui().set_question_text(question_line(&history::describe(&req)).into());
+        self.live_req.store(id, Ordering::SeqCst);
+        self.streaming.clear();
+        self.in_flight = Some((req.clone(), record_q.clone(), chat));
+        self.set_busy(true);
         let cfg = self.cfg.clone();
+        let live = self.live_req.clone();
         std::thread::spawn(move || {
-            let result = llm::ask(&cfg, &req, &|t| {
+            let on_chunk = |t: &str| {
                 let t = t.to_string();
                 let _ = slint::invoke_from_event_loop(move || with_app(|a| a.on_chunk(id, &t)));
-            });
+            };
+            let result = llm::ask(&cfg, &req, &on_chunk, &|| live.load(Ordering::SeqCst) != id);
             let _ = slint::invoke_from_event_loop(move || with_app(|a| a.on_done(id, req, result, record_q, chat)));
         });
     }
 
     fn on_chunk(&mut self, id: u64, text: &str) {
         if id == self.req_id {
+            self.streaming = text.to_string();
             self.ui().set_body_text(text.into());
         }
+    }
+
+    /// Stop button: drop the running request, keep whatever part of the answer already arrived.
+    fn stop(&mut self) {
+        if !self.busy {
+            return;
+        }
+        self.req_id += 1; // late chunks and the final result of the old request are ignored
+        self.live_req.store(0, Ordering::SeqCst);
+        self.set_busy(false);
+        let partial = std::mem::take(&mut self.streaming);
+        let Some((req, record_q, chat)) = self.in_flight.take() else { return self.render() };
+        let text = if partial.trim().is_empty() { "Запрос остановлен.".to_string() } else { format!("{}\n\n[остановлено]", partial.trim()) };
+        let question = history::describe(&req);
+        // marked as an error so that "retry" simply resends it instead of treating it as a rejected answer
+        self.push_answer(Answer { text, req: Some(req), chat, is_error: true, record_q, question });
     }
 
     fn on_done(&mut self, id: u64, req: Request, result: Result<String, String>, record_q: Option<String>, chat: Option<u64>) {
         if id != self.req_id {
             return;
         }
+        self.in_flight = None;
+        self.streaming.clear();
+        self.live_req.store(0, Ordering::SeqCst);
+        self.set_busy(false);
+        let question = history::describe(&req);
         let (text, is_error) = match result {
             Ok(answer) => {
                 self.history.add(self.cfg.history_on(), &req, &answer);
@@ -591,7 +643,7 @@ impl App {
                 (text, true)
             }
         };
-        self.push_answer(Answer { text, req: Some(req), chat, is_error, record_q });
+        self.push_answer(Answer { text, req: Some(req), chat, is_error, record_q, question });
     }
 
     fn retry(&mut self) {
@@ -686,9 +738,14 @@ impl App {
         self.ui().set_history_open(true);
     }
 
+    /// Opens a saved answer together with its question as a new dialog, so it can be clarified.
     fn history_selected(&mut self, i: usize) {
         let Some(e) = self.history.list().get(i).cloned() else { return };
-        self.push_answer(Answer { text: e.a, req: None, chat: None, is_error: false, record_q: None });
+        self.stop();
+        self.new_chat();
+        self.chat = vec![Turn { model: false, text: e.q.clone() }, Turn { model: true, text: e.a.clone() }];
+        let cid = self.chat_id;
+        self.push_answer(Answer { text: e.a, req: None, chat: Some(cid), is_error: false, record_q: None, question: e.q });
     }
 
     fn clear_history(&mut self) {
@@ -903,6 +960,9 @@ impl App {
         ui.set_autostart(self.cfg.autostart);
         ui.set_history_enabled(self.cfg.history_on());
         ui.set_overlay_mode(self.cfg.overlay_mode);
+        let prompt = if self.cfg.prompt.trim().is_empty() { llm::DEFAULT_PROMPT } else { self.cfg.prompt.as_str() };
+        ui.set_prompt_text(prompt.into());
+        self.clear_key_check();
         self.draft_hot = self.cfg.hotkeys();
         self.set_hotkey_models();
         ui.set_saved_text("".into());
@@ -973,14 +1033,10 @@ impl App {
         };
         self.key_drafts[self.active_provider] = ui.get_api_key().to_string();
         let groq = ui.get_provider_index() == 1;
-        let model = if groq {
-            GROQ_MODEL.to_string()
-        } else {
-            match ui.get_model_index() {
-                CUSTOM_MODEL_INDEX => ui.get_model_custom().trim().to_string(),
-                i => GEMINI_IDS.get(i as usize).copied().unwrap_or(GEMINI_IDS[0]).to_string(),
-            }
-        };
+        let model = if groq { GROQ_MODEL.to_string() } else { self.selected_gemini_model() };
+        // the built-in prompt is stored as "default", so later versions of it still apply
+        let prompt = ui.get_prompt_text().trim().to_string();
+        let prompt = if prompt == llm::DEFAULT_PROMPT.trim() { String::new() } else { prompt };
         if !groq && model.is_empty() {
             return fail("Введи ID своей модели Gemini");
         }
@@ -994,6 +1050,7 @@ impl App {
             autostart: ui.get_autostart(),
             accent: self.cfg.accent().to_string(),
             opacity: ui.get_opacity_pct().round() as i32,
+            prompt,
         };
         if let Err(e) = config::validate(&input) {
             return fail(&e);
@@ -1015,6 +1072,7 @@ impl App {
         self.cfg.autostart = input.autostart;
         self.cfg.overlay_mode = ui.get_overlay_mode();
         self.cfg.opacity = Some(input.opacity as f32 / 100.0);
+        self.cfg.prompt = input.prompt.clone();
         if !config::save(&self.store, &self.cfg) {
             self.cfg = previous;
             return fail("Не удалось сохранить настройки. Проверь доступ к папке данных.");
@@ -1036,7 +1094,63 @@ impl App {
         true
     }
 
+    fn selected_gemini_model(&self) -> String {
+        let ui = self.ui();
+        match ui.get_model_index() {
+            CUSTOM_MODEL_INDEX => ui.get_model_custom().trim().to_string(),
+            i => GEMINI_IDS.get(i as usize).copied().unwrap_or(GEMINI_IDS[0]).to_string(),
+        }
+    }
+
+    fn clear_key_check(&mut self) {
+        self.key_check_id += 1; // a check still running for the old provider must not report back
+        self.ui().set_key_check_text("".into());
+    }
+
+    /// Checks the key typed in the field (or the saved one) against the selected provider.
+    fn check_key(&mut self) {
+        let ui = self.ui();
+        let groq = self.active_provider == 1;
+        let typed = ui.get_api_key().trim().to_string();
+        let key = if !typed.is_empty() {
+            typed
+        } else if groq {
+            self.cfg.groq_key.clone()
+        } else {
+            self.cfg.gemini_key.clone()
+        };
+        let model = if groq { String::new() } else { self.selected_gemini_model() };
+        self.key_check_id += 1;
+        let id = self.key_check_id;
+        ui.set_key_check_ok(true);
+        ui.set_key_check_text("Проверяю…".into());
+        std::thread::spawn(move || {
+            let res = llm::check_key(groq, &key, &model);
+            let _ = slint::invoke_from_event_loop(move || {
+                with_app(|a| {
+                    if a.key_check_id != id {
+                        return;
+                    }
+                    let ui = a.ui();
+                    ui.set_key_check_ok(res.is_ok());
+                    let text = match res {
+                        Ok(t) => format!("✓ {t}"),
+                        Err(e) => format!("✗ {e}"),
+                    };
+                    ui.set_key_check_text(text.into());
+                })
+            });
+        });
+    }
+
+    fn prompt_preset(&self, i: usize) {
+        if let Some(p) = llm::PRESETS.get(i) {
+            self.ui().set_prompt_text((*p).into());
+        }
+    }
+
     fn provider_changed(&mut self, idx: usize) {
+        self.clear_key_check();
         let ui = self.ui();
         self.key_drafts[self.active_provider] = ui.get_api_key().to_string();
         self.active_provider = idx.min(1);
@@ -1063,6 +1177,7 @@ impl App {
     fn set_theme(&mut self, dark: bool) {
         self.cfg.theme = if dark { "dark" } else { "light" }.into();
         self.ui().global::<Theme>().set_dark(dark);
+        self.ui().invoke_sync_palette();
         config::save(&self.store, &self.cfg);
     }
 
@@ -1118,6 +1233,7 @@ fn main() {
         theme.set_dark(cfg.dark());
         theme.set_accent_name(cfg.accent().into());
     }
+    ui.invoke_sync_palette();
     ui.set_win_opacity(cfg.opacity());
 
     let hot_mgr = match GlobalHotKeyManager::new() {
@@ -1137,6 +1253,11 @@ fn main() {
         answers: Vec::new(),
         idx: 0,
         req_id: 0,
+        live_req: Arc::new(AtomicU64::new(0)),
+        busy: false,
+        streaming: String::new(),
+        in_flight: None,
+        key_check_id: 0,
         chat_id: 0,
         chat: Vec::new(),
         composer: None,
@@ -1168,6 +1289,9 @@ fn main() {
     ui.on_prev(|| with_app(|a| a.step(-1)));
     ui.on_next(|| with_app(|a| a.step(1)));
     ui.on_retry(|| with_app(|a| a.retry()));
+    ui.on_stop(|| with_app(|a| a.stop()));
+    ui.on_check_key(|| with_app(|a| a.check_key()));
+    ui.on_prompt_preset(|i| with_app(|a| a.prompt_preset(i.max(0) as usize)));
     ui.on_copy({
         let weak = ui.as_weak();
         move || {

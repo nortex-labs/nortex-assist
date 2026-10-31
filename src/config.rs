@@ -10,6 +10,7 @@ pub const ACCENTS: [&str; 6] = ["green", "pink", "blue", "red", "orange", "viole
 pub const GROQ_MODEL: &str = "qwen/qwen3.8-27b";
 /// Lowest window opacity (10 %): below this the window is too easy to lose.
 pub const MIN_OPACITY: f32 = 0.10;
+pub const MAX_PROMPT: usize = 8000;
 pub const HOTKEY_NAMES: [&str; 4] = ["selection", "screenshot", "free", "retry"];
 
 // `default` keeps configs saved before the retry hotkey existed readable.
@@ -71,6 +72,8 @@ pub struct Config {
     pub accent: String,
     pub opacity: Option<f32>,
     pub bounds: Option<Rect>,
+    /// Own system prompt; empty means the built-in one.
+    pub prompt: String,
 }
 
 impl Config {
@@ -164,6 +167,7 @@ pub struct SettingsInput {
     pub autostart: bool,
     pub accent: String,
     pub opacity: i32,
+    pub prompt: String,
 }
 
 pub fn validate(s: &SettingsInput) -> Result<(), String> {
@@ -199,6 +203,9 @@ pub fn validate(s: &SettingsInput) -> Result<(), String> {
     }
     if !((MIN_OPACITY * 100.0) as i32..=100).contains(&s.opacity) {
         return Err(format!("Прозрачность должна быть от {} до 100%", (MIN_OPACITY * 100.0) as i32));
+    }
+    if s.prompt.chars().count() > MAX_PROMPT {
+        return Err(format!("Промпт слишком длинный (больше {MAX_PROMPT} символов)"));
     }
     Ok(())
 }

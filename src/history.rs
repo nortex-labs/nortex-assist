@@ -26,6 +26,21 @@ fn path() -> PathBuf {
     data_dir().join("history.bin")
 }
 
+/// Short human-readable form of a request: the question, or "[скриншот]" plus the instruction.
+pub fn describe(req: &Request) -> String {
+    let n = req.images.len();
+    let mut q = if n > 0 {
+        format!("[скриншот{}]", if n > 1 { format!(" x{n}") } else { String::new() })
+    } else {
+        req.text.clone()
+    };
+    if !req.extra.is_empty() {
+        q.push_str(" - ");
+        q.push_str(&req.extra);
+    }
+    q
+}
+
 impl History {
     pub fn new(store: Arc<Store>) -> Self {
         History { store, items: None }
@@ -73,16 +88,7 @@ impl History {
         if !enabled {
             return;
         }
-        let n = req.images.len();
-        let mut q = if n > 0 {
-            format!("[скриншот{}]", if n > 1 { format!(" x{n}") } else { String::new() })
-        } else {
-            req.text.clone()
-        };
-        if !req.extra.is_empty() {
-            q.push_str(" - ");
-            q.push_str(&req.extra);
-        }
+        let q = describe(req);
         let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
         let q: String = q.chars().take(300).collect();
         let list = self.load();
