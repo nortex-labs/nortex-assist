@@ -349,6 +349,19 @@ impl App {
         self.watched = None;
         self.last_hide = Instant::now();
         self.tick_timer.stop();
+        Self::trim_memory_soon();
+    }
+
+    /// While the app only waits for a hotkey, hand its memory back to Windows; it is paged in again
+    /// (from RAM that Windows has not reused yet, so quickly) the next time the window opens.
+    fn trim_memory_soon() {
+        Timer::single_shot(Duration::from_secs(3), || {
+            with_app(|a| {
+                if !a.visible {
+                    native::trim_memory();
+                }
+            })
+        });
     }
 
     fn drag_start(&mut self, resize: bool) {
@@ -1339,6 +1352,7 @@ fn main() {
     // The regular window takes focus explicitly (see force_focus).
     slint::BackendSelector::new()
         .backend_name("winit".into())
+        .renderer_name("software".into())
         // no taskbar button: the app lives in the tray
         .with_winit_window_attributes_hook(|attrs| attrs.with_active(false).with_skip_taskbar(true))
         .select()
@@ -1581,6 +1595,8 @@ fn main() {
             std::thread::sleep(Duration::from_secs(12 * 3600));
         });
     }
+
+    App::trim_memory_soon();
 
     if first_run {
         // on first launch show the window so the user can enter a key

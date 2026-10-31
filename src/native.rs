@@ -10,7 +10,7 @@ use windows::Win32::Graphics::Gdi::{
     MonitorFromWindow, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CAPTUREBLT, DIB_RGB_COLORS, MONITORINFO,
     MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, SRCCOPY,
 };
-use windows::Win32::System::Threading::{AttachThreadInput, CreateMutexW, GetCurrentThreadId};
+use windows::Win32::System::Threading::{AttachThreadInput, CreateMutexW, GetCurrentProcess, GetCurrentThreadId, SetProcessWorkingSetSize};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP};
 use windows::Win32::Foundation::RECT;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -184,6 +184,13 @@ pub fn capture_cursor_monitor() -> Option<(u32, u32, Vec<u8>)> {
             px[3] = 255;
         }
         Some((w as u32, h as u32, pixels))
+    }
+}
+
+/// Moves the process's pages out of its working set, so an idle app holds almost no RAM.
+pub fn trim_memory() {
+    unsafe {
+        let _ = SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX);
     }
 }
 

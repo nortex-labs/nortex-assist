@@ -113,13 +113,17 @@ component ActionButton inherits Rectangle {
     border-width: primary ? 0px : 1px;
     border-color: Theme.line-strong;
     background: primary ? (ta.pressed ? Theme.accent.darker(0.15) : Theme.accent) : (ta.has-hover ? Theme.line : transparent);
-    Text {
-        text: root.text;
-        color: root.primary ? Theme.accent-ink : Theme.fg;
-        font-size: 12px;
-        font-weight: 600;
-        horizontal-alignment: center;
-        vertical-alignment: center;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        Text {
+            text: root.text;
+            color: root.primary ? Theme.accent-ink : Theme.fg;
+            font-size: 12px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
     }
     ta := TipArea {
         tip: root.tip;
@@ -630,6 +634,7 @@ export component MainWindow inherits Window {
                         padding-top: 4px;
                         padding-bottom: 12px;
                         spacing: 8px;
+                        alignment: start;
                         if root.question-text != "": Text {
                             text: root.question-text;
                             wrap: TextWrap.word-wrap;
