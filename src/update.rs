@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 /// "owner/repo" on GitHub whose releases carry the new versions.
-pub const REPO: &str = "";
+pub const REPO: &str = "diepio1232-ux/nortex-assist";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Command-line flag of a freshly swapped portable exe: wait for the old process to exit first.
 pub const AFTER_UPDATE_ARG: &str = "--after-update";
@@ -61,6 +61,10 @@ fn asset(list: &[Value], pick: impl Fn(&str) -> bool) -> Option<Asset> {
 
 /// Latest release, if it is newer than this build. Ok(None): up to date (or no releases yet).
 pub fn check() -> Result<Option<Release>, String> {
+    check_newer_than(VERSION)
+}
+
+fn check_newer_than(current: &str) -> Result<Option<Release>, String> {
     if REPO.is_empty() {
         return Ok(None);
     }
@@ -77,7 +81,7 @@ pub fn check() -> Result<Option<Release>, String> {
         Err(e) => return Err(format!("нет связи с GitHub ({e})")),
     };
     let tag = body["tag_name"].as_str().unwrap_or_default();
-    if !is_newer(tag, VERSION) {
+    if !is_newer(tag, current) {
         return Ok(None);
     }
     let assets = body["assets"].as_array().cloned().unwrap_or_default();
@@ -159,5 +163,20 @@ mod tests {
         assert!(!is_newer("v1.1.0", "1.1.0"));
         assert!(!is_newer("v1.0.9", "1.1.0"));
         assert!(!is_newer("latest", "1.1.0"));
+    }
+
+    /// Talks to the real GitHub: run with `cargo test -- --ignored` after publishing a release.
+    #[test]
+    #[ignore]
+    fn live_release() {
+        assert!(check().unwrap().is_none(), "this build should be the latest");
+        let rel = check_newer_than("0.0.1").unwrap().expect("a published release");
+        for a in [rel.installer.as_ref().expect("installer asset"), rel.portable.as_ref().expect("portable asset")] {
+            let to = std::env::temp_dir().join("nortex-update-test.bin");
+            download(a, &to).unwrap();
+            assert!(a.sha256.is_some(), "GitHub should publish a digest");
+            let _ = std::fs::remove_file(to);
+        }
+        println!("release {} ok", rel.version);
     }
 }
