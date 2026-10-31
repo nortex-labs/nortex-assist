@@ -873,9 +873,15 @@ impl App {
             self.hide_window();
         }
         let token = self.snip_token.clone();
+        let full = self.cfg.full_screenshot;
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(150));
-            let image = clip::snip(&token, my);
+            let image = if full {
+                // our window is hidden by now, so it is not in the picture
+                native::capture_cursor_monitor().and_then(|(w, h, px)| clip::encode_rgba(w, h, px))
+            } else {
+                clip::snip(&token, my)
+            };
             let _ = slint::invoke_from_event_loop(move || with_app(|a| a.finish_screenshot(image, my, was_visible)));
         });
     }
@@ -894,6 +900,10 @@ impl App {
                 if self.show_composer(&label, Composer::Shot(shots), "Задай вопрос", true) {
                     self.show_window();
                 }
+            }
+            None if self.cfg.full_screenshot => {
+                self.show_status("Снимок экрана не удался.");
+                self.show_window();
             }
             None if was_visible => self.show_window(),
             None => {}
@@ -960,6 +970,7 @@ impl App {
         ui.set_autostart(self.cfg.autostart);
         ui.set_history_enabled(self.cfg.history_on());
         ui.set_overlay_mode(self.cfg.overlay_mode);
+        ui.set_full_screenshot(self.cfg.full_screenshot);
         let prompt = if self.cfg.prompt.trim().is_empty() { llm::DEFAULT_PROMPT } else { self.cfg.prompt.as_str() };
         ui.set_prompt_text(prompt.into());
         self.clear_key_check();
@@ -1071,6 +1082,7 @@ impl App {
         self.cfg.history = Some(input.history);
         self.cfg.autostart = input.autostart;
         self.cfg.overlay_mode = ui.get_overlay_mode();
+        self.cfg.full_screenshot = ui.get_full_screenshot();
         self.cfg.opacity = Some(input.opacity as f32 / 100.0);
         self.cfg.prompt = input.prompt.clone();
         if !config::save(&self.store, &self.cfg) {

@@ -395,6 +395,7 @@ export component MainWindow inherits Window {
     in-out property <bool> autostart;
     in-out property <bool> history-enabled;
     in-out property <bool> overlay-mode;
+    in-out property <bool> full-screenshot;
     in property <string> saved-text;
     in-out property <string> prompt-text;
     in property <string> key-check-text;
@@ -754,6 +755,12 @@ export component MainWindow inherits Window {
                                 title: "Поведение";
                                 Check { label: "Запускать вместе с Windows"; checked <=> root.autostart; }
                                 Check { label: "Сохранять зашифрованную историю"; checked <=> root.history-enabled; }
+                                Check { label: "Скриншот всего экрана сразу, без «Ножниц»"; checked <=> root.full-screenshot; }
+                                Label {
+                                    text: "Alt+W снимает весь монитор под курсором и открывает окно с вопросом. Можно сделать до 4 снимков подряд.";
+                                    font-size: 10px;
+                                    wrap: TextWrap.word-wrap;
+                                }
                                 Check { label: "Режим поверх игр"; checked <=> root.overlay-mode; }
                                 Label {
                                     text: "Alt+W снимает весь экран и сразу показывает короткий ответ в окне, которое не забирает фокус и пропускает клики. Alt+E открывает обычное окно. Работает в оконном и безрамочном режиме игры.";
