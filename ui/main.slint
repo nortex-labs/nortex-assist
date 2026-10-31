@@ -1,0 +1,792 @@
+import { ComboBox, ScrollView, ListView } from "std-widgets.slint";
+
+export struct ThumbItem { img: image }
+export struct HistItem { title: string, sub: string }
+
+export global Theme {
+    in property <bool> dark: true;
+    in property <string> accent-name: "green";
+
+    out property <color> window: dark ? #0e1012 : #f8f9f4;
+    out property <color> surface: dark ? #131619 : #ffffff;
+    out property <color> raised: dark ? #191d20 : #f2f4ee;
+    out property <color> field: dark ? #0c0f10 : #ffffff;
+    out property <color> fg: dark ? #f0f2ec : #20251e;
+    out property <color> muted: dark ? #8b928c : #72796f;
+    out property <color> subtle: dark ? #626a64 : #8c9389;
+    out property <color> line: dark ? #e6ede116 : #1a211619;
+    out property <color> line-strong: dark ? #e6ede126 : #1a211629;
+    out property <color> accent: accent-of(accent-name, dark);
+    out property <color> accent-ink: accent-ink-of(accent-name);
+    out property <color> accent-soft: accent.with-alpha(0.14);
+
+    public pure function accent-of(name: string, d: bool) -> color {
+        if (name == "pink") { return d ? #fa8bc8 : #d94d99; }
+        if (name == "blue") { return d ? #84b8ff : #4d83d4; }
+        if (name == "red") { return d ? #ff8179 : #d65350; }
+        if (name == "orange") { return d ? #ffb26b : #c87827; }
+        if (name == "violet") { return d ? #b69bff : #805fc8; }
+        return d ? #d3f178 : #a9cd5b;
+    }
+
+    pure function accent-ink-of(name: string) -> color {
+        if (name == "pink") { return #24131e; }
+        if (name == "blue") { return #101a29; }
+        if (name == "red") { return #291312; }
+        if (name == "orange") { return #25180d; }
+        if (name == "violet") { return #1a1530; }
+        return #161b0d;
+    }
+}
+
+component IconButton inherits Rectangle {
+    in property <image> icon;
+    in property <bool> active: false;
+    in property <bool> enabled: true;
+    callback clicked();
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: !enabled ? transparent : ta.pressed ? Theme.line-strong : active ? Theme.accent-soft : ta.has-hover ? Theme.line : transparent;
+    Image {
+        source: root.icon;
+        width: 14px;
+        height: 14px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        colorize: !root.enabled ? Theme.subtle : root.active ? Theme.accent : Theme.muted;
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component ActionButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary: false;
+    callback clicked();
+    height: 30px;
+    min-width: 70px;
+    border-radius: 8px;
+    border-width: primary ? 0px : 1px;
+    border-color: Theme.line-strong;
+    background: primary ? (ta.pressed ? Theme.accent.darker(0.15) : Theme.accent) : (ta.has-hover ? Theme.line : transparent);
+    Text {
+        text: root.text;
+        color: root.primary ? Theme.accent-ink : Theme.fg;
+        font-size: 12px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    ta := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component Field inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder;
+    in property <bool> password: false;
+    callback edited();
+    height: 32px;
+    background: Theme.field;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: ti.has-focus ? Theme.accent : Theme.line;
+    // Slint matches Ctrl+C/V/X/A by the typed letter, so they die on a Russian layout;
+    // handle the Cyrillic keys that sit on the same physical keys, plus Shift+Insert.
+    FocusScope {
+        capture-key-pressed(e) => {
+            if (e.modifiers.control && !e.modifiers.alt) {
+                if (e.text == "м" || e.text == "М") { ti.paste(); return accept; }
+                if (e.text == "ф" || e.text == "Ф") { ti.select-all(); return accept; }
+                if (e.text == "с" || e.text == "С") { ti.copy(); return accept; }
+                if (e.text == "ч" || e.text == "Ч") { ti.cut(); return accept; }
+            }
+            if (e.modifiers.shift && e.text == Key.Insert) { ti.paste(); return accept; }
+            return reject;
+        }
+        ti := TextInput {
+            x: 10px;
+            y: 0;
+            width: parent.width - 20px;
+            height: parent.height;
+            vertical-alignment: center;
+            text <=> root.text;
+            input-type: root.password ? InputType.password : InputType.text;
+            color: Theme.fg;
+            font-size: 13px;
+            single-line: true;
+            edited => { root.edited(); }
+        }
+    }
+    if root.text == "": Text {
+        x: 10px;
+        y: 0;
+        width: parent.width - 20px;
+        height: parent.height;
+        vertical-alignment: center;
+        text: root.placeholder;
+        color: Theme.subtle;
+        font-size: 13px;
+        overflow: TextOverflow.elide;
+    }
+    TouchArea {
+        // let a click anywhere in the frame focus the input
+        mouse-cursor: MouseCursor.text;
+        clicked => { ti.focus(); }
+    }
+}
+
+component HotkeyField inherits Rectangle {
+    in property <string> text;
+    callback key(string, bool, bool, bool, bool);
+    callback cancelled();
+    width: 140px;
+    height: 28px;
+    background: Theme.field;
+    border-radius: 7px;
+    border-width: 1px;
+    border-color: fs.has-focus ? Theme.accent : Theme.line;
+    fs := FocusScope {
+        key-pressed(e) => {
+            if (e.text == Key.Escape) {
+                root.cancelled();
+                return accept;
+            }
+            root.key(e.text, e.modifiers.control, e.modifiers.alt, e.modifiers.shift, e.modifiers.meta);
+            return accept;
+        }
+        Text {
+            text: fs.has-focus ? "нажми клавиши…" : root.text;
+            color: fs.has-focus ? Theme.muted : Theme.fg;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+    TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { fs.focus(); }
+    }
+}
+
+component Check inherits Rectangle {
+    in-out property <bool> checked;
+    in property <string> label;
+    height: 26px;
+    HorizontalLayout {
+        spacing: 8px;
+        alignment: start;
+        Rectangle {
+            width: 16px;
+            height: 16px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 5px;
+            border-width: 1px;
+            border-color: root.checked ? Theme.accent : Theme.line-strong;
+            background: root.checked ? Theme.accent : Theme.field;
+            if root.checked: Path {
+                width: 10px;
+                height: 10px;
+                x: 3px;
+                y: 3px;
+                viewbox-width: 12;
+                viewbox-height: 12;
+                commands: "M 2 6 L 5 9 L 10 3";
+                stroke: Theme.accent-ink;
+                stroke-width: 1.8px;
+            }
+        }
+        Text {
+            text: root.label;
+            color: Theme.fg;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+    }
+    TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.checked = !root.checked; }
+    }
+}
+
+component OpacitySlider inherits Rectangle {
+    in-out property <float> value: 100;
+    in property <float> minimum: 10;
+    in property <float> maximum: 100;
+    callback changed(float);
+    height: 22px;
+    function apply(x: length) {
+        root.value = Math.clamp(root.minimum + x / root.width * (root.maximum - root.minimum), root.minimum, root.maximum);
+        root.changed(root.value);
+    }
+    // children of a plain Rectangle are centred unless x is set, hence the explicit x: 0px
+    Rectangle {
+        x: 0px;
+        y: (parent.height - self.height) / 2;
+        width: parent.width;
+        height: 4px;
+        border-radius: 2px;
+        background: Theme.line-strong;
+    }
+    Rectangle {
+        x: 0px;
+        y: (parent.height - self.height) / 2;
+        height: 4px;
+        width: (root.value - root.minimum) / (root.maximum - root.minimum) * (parent.width - 16px) + 8px;
+        border-radius: 2px;
+        background: Theme.accent;
+    }
+    Rectangle {
+        x: (root.value - root.minimum) / (root.maximum - root.minimum) * (parent.width - self.width);
+        y: (parent.height - self.height) / 2;
+        width: 16px;
+        height: 16px;
+        border-radius: 8px;
+        background: Theme.accent;
+    }
+    TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                root.apply(self.mouse-x);
+            }
+        }
+        moved => {
+            if (self.pressed) { root.apply(self.mouse-x); }
+        }
+    }
+}
+
+component Card inherits Rectangle {
+    in property <string> index;
+    in property <string> title;
+    background: Theme.surface;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: Theme.line;
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            Text { text: root.index; color: Theme.accent; font-size: 10px; font-weight: 700; vertical-alignment: center; }
+            Text { text: root.title; color: Theme.fg; font-size: 13px; font-weight: 600; }
+        }
+        @children
+    }
+}
+
+component Label inherits Text {
+    color: Theme.muted;
+    font-size: 11px;
+}
+
+export component MainWindow inherits Window {
+    no-frame: true;
+    always-on-top: true;
+    background: transparent;
+    title: "Nortex Assist";
+    icon: @image-url("icon.png");
+    default-font-family: "Segoe UI";
+    default-font-size: 13px;
+    preferred-width: 540px;
+    preferred-height: 680px;
+    min-width: root.min-w;
+    min-height: root.min-h;
+
+    in property <length> min-w: 280px;
+    in property <length> min-h: 120px;
+    in property <float> win-opacity: 1.0;
+    in property <bool> pinned: false;
+    // compact, click-through presentation used by the game-overlay mode
+    in property <bool> overlay-view: false;
+
+    // answer area
+    in property <string> body-text;
+    in property <string> pos-text;
+    in property <bool> prev-enabled;
+    in property <bool> next-enabled;
+    in property <bool> retry-enabled;
+    in property <bool> copy-done;
+
+    // composer
+    in property <bool> composer-on;
+    in property <string> composer-placeholder;
+    in-out property <string> composer-text;
+    in property <[ThumbItem]> thumbs;
+
+    // history
+    in property <bool> history-open;
+    in property <[HistItem]> history-items;
+
+    // settings
+    in property <bool> settings-open;
+    in-out property <int> provider-index;
+    in-out property <int> model-index;
+    in-out property <string> model-custom;
+    in-out property <string> api-key;
+    in property <string> api-key-label;
+    in property <string> api-key-placeholder;
+    in property <string> api-key-link-text;
+    in-out property <float> opacity-pct: 100;
+    in-out property <bool> autostart;
+    in-out property <bool> history-enabled;
+    in-out property <bool> overlay-mode;
+    in property <string> saved-text;
+    in property <[string]> hotkey-labels;
+    in property <[string]> hotkey-values;
+    property <[string]> gemini-models: [
+        "Gemini 3.5 Flash-Lite · по умолчанию",
+        "Gemini 3.8 Flash · актуальная",
+        "Gemini 3.7 Flash",
+        "Gemini 3.6 Flash",
+        "Gemini 3.5 Flash",
+        "Gemini 3.1 Flash-Lite · экономная",
+        "Gemini 3.1 Pro · предварительная",
+        "Gemini 3 Flash · предварительная",
+        "Gemini 2.5 Pro · предыдущая",
+        "Gemini 2.5 Flash · предыдущая",
+        "Своя модель…",
+    ];
+
+    callback submit(string);
+    callback prev();
+    callback next();
+    callback retry();
+    callback copy();
+    callback toggle-history();
+    callback clear-history();
+    callback toggle-settings();
+    callback toggle-pin();
+    callback hide-window();
+    callback escape-pressed();
+    callback drag-start();
+    callback drag-move();
+    callback resize-start();
+    callback resize-move();
+    callback paste-image() -> bool;
+    callback remove-image(int);
+    callback history-selected(int);
+    callback provider-changed(int);
+    callback opacity-changed(float);
+    callback toggle-theme();
+    callback accent-picked(string);
+    callback hotkey-key(int, string, bool, bool, bool, bool);
+    callback hotkey-cancelled();
+    callback reset-hotkeys();
+    callback open-key-link();
+    callback save-settings();
+    callback exit-app();
+
+    public function focus-input() { inp.focus(); }
+    public function focus-root() { root-scope.focus(); }
+
+    root-scope := FocusScope {
+        key-pressed(e) => {
+            if (e.text == Key.Escape && !root.pinned) {
+                root.escape-pressed();
+                return accept;
+            }
+            return reject;
+        }
+        capture-key-pressed(e) => {
+            if (root.composer-on && e.modifiers.control && (e.text == "v" || e.text == "V" || e.text == "м" || e.text == "М")) {
+                if (root.paste-image()) { return accept; }
+            }
+            return reject;
+        }
+
+        Rectangle {
+            opacity: root.win-opacity;
+            background: Theme.window;
+            border-radius: 18px;
+            border-width: 1px;
+            border-color: Theme.line-strong;
+            clip: true;
+
+            VerticalLayout {
+                // ---- toolbar ----
+                Rectangle {
+                    visible: !root.overlay-view;
+                    height: root.overlay-view ? 0px : 44px;
+                    TouchArea {
+                        pointer-event(e) => {
+                            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                                root.drag-start();
+                            }
+                        }
+                        moved => {
+                            if (self.pressed) { root.drag-move(); }
+                        }
+                    }
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        padding-top: 8px;
+                        padding-bottom: 8px;
+                        spacing: 2px;
+                        IconButton { icon: @image-url("icons/left.svg"); enabled: root.prev-enabled; clicked => { root.prev(); } }
+                        Text { text: root.pos-text; color: Theme.muted; font-size: 11px; vertical-alignment: center; horizontal-alignment: center; min-width: 34px; }
+                        IconButton { icon: @image-url("icons/right.svg"); enabled: root.next-enabled; clicked => { root.next(); } }
+                        Rectangle { width: 8px; }
+                        IconButton { icon: @image-url("icons/retry.svg"); enabled: root.retry-enabled; clicked => { root.retry(); } }
+                        IconButton { icon: @image-url("icons/copy.svg"); active: root.copy-done; clicked => { root.copy(); } }
+                        Rectangle { horizontal-stretch: 1; }
+                        IconButton { icon: @image-url("icons/trash.svg"); clicked => { root.clear-history(); } }
+                        IconButton { icon: @image-url("icons/history.svg"); active: root.history-open; clicked => { root.toggle-history(); } }
+                        IconButton { icon: @image-url("icons/settings.svg"); active: root.settings-open; clicked => { root.toggle-settings(); } }
+                        IconButton { icon: @image-url("icons/pin.svg"); active: root.pinned; clicked => { root.toggle-pin(); } }
+                        IconButton { icon: @image-url("icons/close.svg"); clicked => { root.hide-window(); } }
+                    }
+                }
+
+                // ---- answer in overlay presentation: just the text, centred ----
+                if root.overlay-view: Rectangle {
+                    vertical-stretch: 1;
+                    Text {
+                        x: 16px;
+                        width: parent.width - 32px;
+                        height: parent.height;
+                        text: root.body-text;
+                        wrap: TextWrap.word-wrap;
+                        overflow: TextOverflow.elide;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        color: Theme.fg;
+                        font-size: 16px;
+                        font-weight: 500;
+                    }
+                }
+
+                // ---- answer ----
+                if !root.settings-open && !root.history-open && !root.overlay-view: ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        padding-top: 4px;
+                        padding-bottom: 12px;
+                        Text {
+                            text: root.body-text;
+                            wrap: TextWrap.word-wrap;
+                            color: Theme.fg;
+                            font-size: 14px;
+                        }
+                    }
+                }
+
+                // ---- history ----
+                if root.history-open && !root.settings-open: VerticalLayout {
+                    vertical-stretch: 1;
+                    padding: 16px;
+                    padding-top: 4px;
+                    spacing: 8px;
+                    Text { text: "ПОСЛЕДНИЕ ДИАЛОГИ"; color: Theme.accent; font-size: 9px; font-weight: 700; }
+                    Text { text: "История"; color: Theme.fg; font-size: 17px; font-weight: 700; }
+                    if root.history-items.length == 0: Text { text: "Пока пусто"; color: Theme.muted; }
+                    ListView {
+                        vertical-stretch: 1;
+                        for it[i] in root.history-items: Rectangle {
+                            height: 52px;
+                            background: hta.has-hover ? Theme.line : transparent;
+                            border-radius: 8px;
+                            VerticalLayout {
+                                padding: 6px;
+                                padding-left: 8px;
+                                spacing: 2px;
+                                Text { text: it.title; color: Theme.fg; font-size: 13px; font-weight: 600; overflow: TextOverflow.elide; }
+                                Text { text: it.sub; color: Theme.muted; font-size: 11px; overflow: TextOverflow.elide; }
+                            }
+                            hta := TouchArea {
+                                mouse-cursor: MouseCursor.pointer;
+                                clicked => { root.history-selected(i); }
+                            }
+                        }
+                    }
+                }
+
+                // ---- settings ----
+                if root.settings-open: VerticalLayout {
+                    vertical-stretch: 1;
+                    Rectangle {
+                        height: 40px;
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 12px;
+                            Text { text: "Настройки"; color: Theme.fg; font-size: 17px; font-weight: 700; vertical-alignment: center; }
+                            Rectangle { horizontal-stretch: 1; }
+                            IconButton {
+                                y: 6px;
+                                icon: Theme.dark ? @image-url("icons/sun.svg") : @image-url("icons/moon.svg");
+                                clicked => { root.toggle-theme(); }
+                            }
+                        }
+                    }
+                    ScrollView {
+                        vertical-stretch: 1;
+                        VerticalLayout {
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            padding-bottom: 8px;
+                            spacing: 10px;
+
+                            Card {
+                                index: "01";
+                                title: "Модель и подключение";
+                                Label { text: "Провайдер"; }
+                                ComboBox {
+                                    model: ["Google Gemini", "Groq"];
+                                    current-index <=> root.provider-index;
+                                    selected(v) => { root.provider-changed(self.current-index); }
+                                }
+                                if root.provider-index == 0: VerticalLayout {
+                                    spacing: 8px;
+                                    Label { text: "Модель Gemini"; }
+                                    ComboBox {
+                                        model: root.gemini-models;
+                                        current-index <=> root.model-index;
+                                    }
+                                    if root.model-index == 10: Field {
+                                        text <=> root.model-custom;
+                                        placeholder: "Например: gemini-3.8-flash";
+                                    }
+                                }
+                                if root.provider-index == 1: VerticalLayout {
+                                    spacing: 8px;
+                                    Label { text: "Модель Groq"; }
+                                    ComboBox { model: ["Qwen 3.8 · 27B"]; current-index: 0; }
+                                    Label { text: "Qwen 3.8 27B поддерживает текст и изображения."; font-size: 10px; }
+                                }
+                                Label { text: root.api-key-label; }
+                                Field {
+                                    password: true;
+                                    text <=> root.api-key;
+                                    placeholder: root.api-key-placeholder;
+                                }
+                                Text {
+                                    text: root.api-key-link-text;
+                                    color: Theme.accent;
+                                    font-size: 11px;
+                                    TouchArea {
+                                        mouse-cursor: MouseCursor.pointer;
+                                        clicked => { root.open-key-link(); }
+                                    }
+                                }
+                            }
+
+                            Card {
+                                index: "02";
+                                title: "Окно и внешний вид";
+                                Label { text: "Прозрачность окна: " + Math.round(root.opacity-pct) + "%"; }
+                                OpacitySlider {
+                                    value <=> root.opacity-pct;
+                                    changed(v) => { root.opacity-changed(v); }
+                                }
+                                Label { text: "Акцентный цвет"; }
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    alignment: start;
+                                    for name in ["green", "pink", "blue", "red", "orange", "violet"]: Rectangle {
+                                        width: 24px;
+                                        height: 24px;
+                                        border-radius: 12px;
+                                        background: Theme.accent-of(name, Theme.dark);
+                                        border-width: Theme.accent-name == name ? 2px : 0px;
+                                        border-color: Theme.fg;
+                                        TouchArea {
+                                            mouse-cursor: MouseCursor.pointer;
+                                            clicked => { root.accent-picked(name); }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Card {
+                                index: "03";
+                                title: "Поведение";
+                                Check { label: "Запускать вместе с Windows"; checked <=> root.autostart; }
+                                Check { label: "Сохранять зашифрованную историю"; checked <=> root.history-enabled; }
+                                Check { label: "Режим поверх игр"; checked <=> root.overlay-mode; }
+                                Label {
+                                    text: "Alt+W снимает весь экран и сразу показывает короткий ответ в окне, которое не забирает фокус и пропускает клики. Alt+E открывает обычное окно. Работает в оконном и безрамочном режиме игры.";
+                                    font-size: 10px;
+                                    wrap: TextWrap.word-wrap;
+                                }
+                            }
+
+                            Card {
+                                index: "04";
+                                title: "Горячие клавиши";
+                                for label[i] in root.hotkey-labels: HorizontalLayout {
+                                    spacing: 8px;
+                                    Text { text: label; color: Theme.fg; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; }
+                                    HotkeyField {
+                                        text: root.hotkey-values[i];
+                                        key(t, c, a, s, m) => { root.hotkey-key(i, t, c, a, s, m); }
+                                        cancelled => { root.hotkey-cancelled(); }
+                                    }
+                                }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
+                                    ActionButton { text: "По умолчанию"; clicked => { root.reset-hotkeys(); } }
+                                    ActionButton { text: "Очистить историю"; clicked => { root.clear-history(); } }
+                                }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        height: 52px;
+                        HorizontalLayout {
+                            padding: 10px;
+                            padding-left: 16px;
+                            spacing: 8px;
+                            Text {
+                                text: root.saved-text;
+                                color: Theme.muted;
+                                font-size: 11px;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                overflow: TextOverflow.elide;
+                            }
+                            ActionButton { text: "Выйти"; clicked => { root.exit-app(); } }
+                            ActionButton { text: "Готово"; primary: true; clicked => { root.save-settings(); } }
+                        }
+                    }
+                }
+
+                // ---- composer ----
+                Rectangle {
+                    property <bool> shown: root.composer-on && !root.settings-open && !root.history-open && !root.overlay-view;
+                    visible: shown;
+                    height: shown ? (root.thumbs.length > 0 ? 122px : 58px) : 0px;
+                    VerticalLayout {
+                    padding: 10px;
+                    padding-top: 4px;
+                    spacing: 8px;
+                    if root.thumbs.length > 0: HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        for t[i] in root.thumbs: Rectangle {
+                            width: 52px;
+                            height: 52px;
+                            border-radius: 8px;
+                            clip: true;
+                            Image { source: t.img; image-fit: ImageFit.cover; width: parent.width; height: parent.height; }
+                            TouchArea {
+                                mouse-cursor: MouseCursor.pointer;
+                                clicked => { root.remove-image(i); }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        height: 44px;
+                        background: Theme.field;
+                        border-radius: 12px;
+                        border-width: 1px;
+                        border-color: inp.has-focus ? Theme.accent : Theme.line;
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 7px;
+                            padding-top: 7px;
+                            padding-bottom: 7px;
+                            spacing: 8px;
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                FocusScope {
+                                    capture-key-pressed(e) => {
+                                        if (e.modifiers.control && !e.modifiers.alt) {
+                                            if (e.text == "м" || e.text == "М") { inp.paste(); return accept; }
+                                            if (e.text == "ф" || e.text == "Ф") { inp.select-all(); return accept; }
+                                            if (e.text == "с" || e.text == "С") { inp.copy(); return accept; }
+                                            if (e.text == "ч" || e.text == "Ч") { inp.cut(); return accept; }
+                                        }
+                                        if (e.modifiers.shift && e.text == Key.Insert) { inp.paste(); return accept; }
+                                        return reject;
+                                    }
+                                    inp := TextInput {
+                                        y: 0;
+                                        width: parent.width;
+                                        height: parent.height;
+                                        vertical-alignment: center;
+                                        text <=> root.composer-text;
+                                        color: Theme.fg;
+                                        font-size: 14px;
+                                        single-line: true;
+                                        accepted => { root.submit(self.text); }
+                                    }
+                                }
+                                if root.composer-text == "": Text {
+                                    y: 0;
+                                    width: parent.width;
+                                    height: parent.height;
+                                    vertical-alignment: center;
+                                    text: root.composer-placeholder;
+                                    color: Theme.subtle;
+                                    font-size: 14px;
+                                    overflow: TextOverflow.elide;
+                                }
+                            }
+                            Rectangle {
+                                width: 30px;
+                                background: Theme.accent;
+                                border-radius: 9px;
+                                Image {
+                                    source: @image-url("icons/send.svg");
+                                    width: 14px;
+                                    height: 14px;
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    colorize: Theme.accent-ink;
+                                }
+                                TouchArea {
+                                    mouse-cursor: MouseCursor.pointer;
+                                    clicked => { root.submit(root.composer-text); }
+                                }
+                            }
+                        }
+                    }
+                    }
+                }
+            }
+
+            // resize grip
+            Rectangle {
+                visible: !root.overlay-view;
+                x: parent.width - 20px;
+                y: parent.height - 20px;
+                width: 20px;
+                height: 20px;
+                Path {
+                    x: 6px;
+                    y: 6px;
+                    width: 10px;
+                    height: 10px;
+                    viewbox-width: 10;
+                    viewbox-height: 10;
+                    commands: "M 9 1 L 1 9 M 9 5 L 5 9";
+                    stroke: Theme.subtle;
+                    stroke-width: 1.2px;
+                }
+                TouchArea {
+                    mouse-cursor: MouseCursor.nwse-resize;
+                    pointer-event(e) => {
+                        if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                            root.resize-start();
+                        }
+                    }
+                    moved => {
+                        if (self.pressed) { root.resize-move(); }
+                    }
+                }
+            }
+        }
+    }
+}
