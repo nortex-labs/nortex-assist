@@ -70,6 +70,8 @@ pub struct Config {
     pub overlay_mode: bool,
     /// Screenshot hotkey grabs the whole monitor at once instead of opening the Windows snipping tool.
     pub full_screenshot: bool,
+    /// Automatic update checks are on unless this is set.
+    pub no_update_check: bool,
     pub theme: String,
     pub accent: String,
     pub opacity: Option<f32>,

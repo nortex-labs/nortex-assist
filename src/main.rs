@@ -7,6 +7,7 @@ mod history;
 mod llm;
 mod logging;
 mod native;
+mod update;
 
 use config::{Config, Hotkeys, Rect, SettingsInput, ACCENTS, GROQ_MODEL, HOTKEY_NAMES};
 use global_hotkey::hotkey::HotKey;
@@ -38,19 +39,9 @@ const BLUR_GRACE: Duration = Duration::from_millis(400);
 const OVERLAY_SIZE: (f32, f32) = (460.0, 150.0);
 const OVERLAY_TIMEOUT: Duration = Duration::from_secs(20);
 
-const GEMINI_IDS: [&str; 10] = [
-    "gemini-3.5-flash-lite",
-    "gemini-3.8-flash",
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-3.1-flash-lite",
-    "gemini-3.1-pro-preview",
-    "gemini-3-flash-preview",
-    "gemini-2.5-pro",
-    "gemini-2.5-flash",
-];
-const CUSTOM_MODEL_INDEX: i32 = 10;
+// A saved model that is not in this list shows up as "own model" with its id filled in.
+const GEMINI_IDS: [&str; 4] = ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.1-pro-preview", "gemini-2.5-flash"];
+const CUSTOM_MODEL_INDEX: i32 = GEMINI_IDS.len() as i32;
 const HOTKEY_LABELS: [&str; 4] = ["Выделенный текст", "Скриншот", "Свободный вопрос / настройки", "Повторить запрос"];
 
 struct Answer {
@@ -73,7 +64,8 @@ struct DragState {
 enum Composer {
     Free,
     Selection(String),
-    Shot(Vec<String>),
+    /// screenshots live in `pending` like pasted images, so they get thumbnails
+    Shot,
     FollowUp,
 }
 
@@ -92,11 +84,15 @@ struct App {
     streaming: String,
     in_flight: Option<(Request, Option<String>, Option<u64>)>,
     key_check_id: u64,
+    update: Option<update::Release>,
+    update_dismissed: bool,
+    updating: bool,
+    /// read by the background update thread
+    auto_update: Arc<std::sync::atomic::AtomicBool>,
     chat_id: u64,
     chat: Vec<Turn>,
     composer: Option<Composer>,
     pending: Vec<(String, Image)>,
-    pending_shots: Vec<String>,
 
     visible: bool,
     overlay_view: bool,
@@ -345,6 +341,7 @@ impl App {
             self.finish_settings_close();
         }
         self.hide_hist();
+        self.ui().global::<Tip>().set_text("".into());
         let _ = self.ui().hide();
         self.visible = false;
         self.overlay_view = false;
@@ -545,9 +542,16 @@ impl App {
                     self.send(Request { extra: combined, images: imgs, ..Default::default() }, Some(text), Some(cid));
                 }
             }
-            Composer::Shot(shots) => {
-                let mut all = shots;
-                all.extend(self.take_pending());
+            Composer::Shot => {
+                if self.pending.is_empty() {
+                    // every snapshot was removed: what is left is an ordinary question
+                    if !extra.is_empty() {
+                        self.new_chat();
+                        self.ask_in_chat(extra);
+                    }
+                    return;
+                }
+                let all = self.take_pending();
                 self.new_chat();
                 let cid = self.chat_id;
                 let q = if extra.is_empty() { "[скриншот]".to_string() } else { extra.clone() };
@@ -571,9 +575,6 @@ impl App {
     fn send(&mut self, req: Request, record_q: Option<String>, chat: Option<u64>) {
         self.req_id += 1;
         let id = self.req_id;
-        if !req.images.is_empty() {
-            self.pending_shots.clear();
-        }
         self.show_status("Думаю…");
         self.ui().set_question_text(question_line(&history::describe(&req)).into());
         self.live_req.store(id, Ordering::SeqCst);
@@ -672,6 +673,19 @@ impl App {
             self.show_overlay();
         } else if !self.visible {
             self.show_window();
+        }
+    }
+
+    /// Esc or the close button: stop a running request (the next open starts a new chat anyway) and hide.
+    /// A pinned window only stops the request.
+    fn close_pressed(&mut self) {
+        let was_busy = self.busy;
+        self.stop();
+        if was_busy && self.pinned {
+            return;
+        }
+        if self.close_settings() {
+            self.hide_window();
         }
     }
 
@@ -876,28 +890,31 @@ impl App {
         let full = self.cfg.full_screenshot;
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(150));
-            let image = if full {
+            let raw = if full {
                 // our window is hidden by now, so it is not in the picture
-                native::capture_cursor_monitor().and_then(|(w, h, px)| clip::encode_rgba(w, h, px))
+                native::capture_cursor_monitor()
             } else {
                 clip::snip(&token, my)
             };
+            let image = raw.and_then(|(w, h, px)| clip::prepare_shot(w, h, px));
             let _ = slint::invoke_from_event_loop(move || with_app(|a| a.finish_screenshot(image, my, was_visible)));
         });
     }
 
-    fn finish_screenshot(&mut self, image: Option<String>, my: u64, was_visible: bool) {
+    fn finish_screenshot(&mut self, image: Option<clip::Shot>, my: u64, was_visible: bool) {
         if self.snip_token.load(Ordering::SeqCst) != my {
             return;
         }
         match image {
-            Some(img) => {
-                self.pending_shots.push(img);
-                let extra = self.pending_shots.len().saturating_sub(MAX_SHOTS);
-                self.pending_shots.drain(..extra);
-                let shots = self.pending_shots.clone();
-                let label = if shots.len() == 1 { "Снимок экрана готов".to_string() } else { format!("Снимков экрана: {}", shots.len()) };
-                if self.show_composer(&label, Composer::Shot(shots), "Задай вопрос", true) {
+            Some((b64, (w, h, rgba))) => {
+                if self.pending.len() >= MAX_SHOTS {
+                    self.pending.remove(0); // the oldest snapshot makes room
+                }
+                self.pending.push((b64, make_image(w, h, &rgba)));
+                self.refresh_thumbs();
+                let n = self.pending.len();
+                let label = if n == 1 { "Снимок экрана готов".to_string() } else { format!("Снимков экрана: {n}") };
+                if self.show_composer(&label, Composer::Shot, "Задай вопрос (нажми на миниатюру, чтобы убрать снимок)", true) {
                     self.show_window();
                 }
             }
@@ -971,6 +988,9 @@ impl App {
         ui.set_history_enabled(self.cfg.history_on());
         ui.set_overlay_mode(self.cfg.overlay_mode);
         ui.set_full_screenshot(self.cfg.full_screenshot);
+        ui.set_auto_update(!self.cfg.no_update_check);
+        ui.set_version_text(format!("Версия {}", update::VERSION).into());
+        ui.set_update_status("".into());
         let prompt = if self.cfg.prompt.trim().is_empty() { llm::DEFAULT_PROMPT } else { self.cfg.prompt.as_str() };
         ui.set_prompt_text(prompt.into());
         self.clear_key_check();
@@ -1083,6 +1103,8 @@ impl App {
         self.cfg.autostart = input.autostart;
         self.cfg.overlay_mode = ui.get_overlay_mode();
         self.cfg.full_screenshot = ui.get_full_screenshot();
+        self.cfg.no_update_check = !ui.get_auto_update();
+        self.auto_update.store(!self.cfg.no_update_check, Ordering::SeqCst);
         self.cfg.opacity = Some(input.opacity as f32 / 100.0);
         self.cfg.prompt = input.prompt.clone();
         if !config::save(&self.store, &self.cfg) {
@@ -1155,6 +1177,79 @@ impl App {
         });
     }
 
+    // ---------- updates ----------
+
+    fn update_found(&mut self, rel: update::Release) {
+        let ui = self.ui();
+        ui.set_update_text(format!("Доступна новая версия {}", rel.version).into());
+        ui.set_update_shown(!self.update_dismissed);
+        self.update = Some(rel);
+    }
+
+    /// "Проверить сейчас" in the settings.
+    fn check_updates(&mut self) {
+        let ui = self.ui();
+        if update::REPO.is_empty() {
+            ui.set_update_status("Обновления пока не настроены.".into());
+            return;
+        }
+        ui.set_update_status("Проверяю…".into());
+        std::thread::spawn(|| {
+            let res = update::check();
+            let _ = slint::invoke_from_event_loop(move || {
+                with_app(|a| {
+                    let text = match res {
+                        Ok(Some(rel)) => {
+                            let t = format!("Есть новая версия {}: нажми «Обновить» в полосе над ответом.", rel.version);
+                            a.update_dismissed = false;
+                            a.update_found(rel);
+                            t
+                        }
+                        Ok(None) => "У тебя последняя версия.".to_string(),
+                        Err(e) => format!("Не удалось проверить: {e}."),
+                    };
+                    a.ui().set_update_status(text.into());
+                })
+            });
+        });
+    }
+
+    fn update_now(&mut self) {
+        let Some(rel) = self.update.clone() else { return };
+        if self.updating {
+            return;
+        }
+        let ready = if update::is_installed() { rel.installer.is_some() } else { rel.portable.is_some() };
+        if !ready {
+            native::open_url(&rel.page); // nothing to install automatically: show the release page
+            return;
+        }
+        self.updating = true;
+        let ui = self.ui();
+        ui.set_update_busy(true);
+        ui.set_update_text(format!("Скачиваю версию {}…", rel.version).into());
+        std::thread::spawn(move || {
+            let res = update::apply(&rel);
+            let _ = slint::invoke_from_event_loop(move || match res {
+                Ok(()) => {
+                    let _ = slint::quit_event_loop();
+                }
+                Err(e) => with_app(|a| {
+                    log_err(&format!("update: {e}"));
+                    a.updating = false;
+                    let ui = a.ui();
+                    ui.set_update_busy(false);
+                    ui.set_update_text(format!("Обновление не удалось: {e}").into());
+                }),
+            });
+        });
+    }
+
+    fn update_dismiss(&mut self) {
+        self.update_dismissed = true;
+        self.ui().set_update_shown(false);
+    }
+
     fn prompt_preset(&self, i: usize) {
         if let Some(p) = llm::PRESETS.get(i) {
             self.ui().set_prompt_text((*p).into());
@@ -1204,9 +1299,19 @@ impl App {
 
 fn main() {
     std::panic::set_hook(Box::new(|info| log_err(&format!("panic: {info}"))));
-    if !native::acquire_single_instance() {
+    if std::env::args().any(|a| a == update::AFTER_UPDATE_ARG) {
+        // started by a portable self-update: the old copy is still quitting
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !native::acquire_single_instance() {
+            if Instant::now() > deadline {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    } else if !native::acquire_single_instance() {
         return;
     }
+    update::cleanup();
     let store = match crypto::Store::open(&config::data_dir()) {
         Ok(s) => Arc::new(s),
         Err(e) => {
@@ -1256,6 +1361,7 @@ fn main() {
         }
     };
     let first_run = !cfg.has_key();
+    let cfg_auto_off = cfg.no_update_check;
     let app = Rc::new(RefCell::new(App {
         ui: ui.as_weak(),
         history: History::new(store.clone()),
@@ -1270,11 +1376,14 @@ fn main() {
         streaming: String::new(),
         in_flight: None,
         key_check_id: 0,
+        update: None,
+        update_dismissed: false,
+        updating: false,
+        auto_update: Arc::new(std::sync::atomic::AtomicBool::new(!cfg_auto_off)),
         chat_id: 0,
         chat: Vec::new(),
         composer: None,
         pending: Vec::new(),
-        pending_shots: Vec::new(),
         visible: false,
         overlay_view: false,
         auto_hide: None,
@@ -1302,6 +1411,9 @@ fn main() {
     ui.on_next(|| with_app(|a| a.step(1)));
     ui.on_retry(|| with_app(|a| a.retry()));
     ui.on_stop(|| with_app(|a| a.stop()));
+    ui.on_update_now(|| with_app(|a| a.update_now()));
+    ui.on_update_dismiss(|| with_app(|a| a.update_dismiss()));
+    ui.on_check_updates(|| with_app(|a| a.check_updates()));
     ui.on_check_key(|| with_app(|a| a.check_key()));
     ui.on_prompt_preset(|i| with_app(|a| a.prompt_preset(i.max(0) as usize)));
     ui.on_copy({
@@ -1331,8 +1443,8 @@ fn main() {
             }
         }
     });
-    ui.on_hide_window(|| with_app(|a| if a.close_settings() { a.hide_window() }));
-    ui.on_escape_pressed(|| with_app(|a| if a.close_settings() { a.hide_window() }));
+    ui.on_hide_window(|| with_app(|a| a.close_pressed()));
+    ui.on_escape_pressed(|| with_app(|a| a.close_pressed()));
     // Moving/resizing is done by following the cursor ourselves rather than via the native
     // modal loop, which swallows the mouse-up and leaves the toolkit's buttons unresponsive.
     ui.on_drag_start(|| with_app(|a| a.drag_start(false)));
@@ -1452,6 +1564,23 @@ fn main() {
             let _ = slint::quit_event_loop();
         }
     }));
+
+    if !update::REPO.is_empty() {
+        let enabled = app.borrow().auto_update.clone();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(10));
+            if enabled.load(Ordering::SeqCst) {
+                match update::check() {
+                    Ok(Some(rel)) => {
+                        let _ = slint::invoke_from_event_loop(move || with_app(|a| a.update_found(rel)));
+                    }
+                    Ok(None) => {}
+                    Err(e) => log_err(&format!("update check: {e}")),
+                }
+            }
+            std::thread::sleep(Duration::from_secs(12 * 3600));
+        });
+    }
 
     if first_run {
         // on first launch show the window so the user can enter a key

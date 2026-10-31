@@ -39,10 +39,48 @@ export global Theme {
     }
 }
 
+// The one tooltip of the window; drawn on top of everything by MainWindow.
+export global Tip {
+    in-out property <string> text;
+    in-out property <length> x;
+    in-out property <length> y;
+    in-out property <length> anchor-h;
+}
+
+// Touch area that shows `tip` after the pointer rests on it for a moment.
+component TipArea inherits TouchArea {
+    in property <string> tip;
+    property <bool> done: false;
+    changed has-hover => {
+        if (!self.has-hover) {
+            self.done = false;
+            Tip.text = "";
+        }
+    }
+    changed pressed => {
+        if (self.pressed) {
+            self.done = true;
+            Tip.text = "";
+        }
+    }
+    Timer {
+        interval: 1500ms;
+        running: root.has-hover && !root.done && root.tip != "";
+        triggered => {
+            root.done = true;
+            Tip.x = root.absolute-position.x;
+            Tip.y = root.absolute-position.y;
+            Tip.anchor-h = root.height;
+            Tip.text = root.tip;
+        }
+    }
+}
+
 component IconButton inherits Rectangle {
     in property <image> icon;
     in property <bool> active: false;
     in property <bool> enabled: true;
+    in property <string> tip;
     callback clicked();
     width: 28px;
     height: 28px;
@@ -56,7 +94,8 @@ component IconButton inherits Rectangle {
         y: (parent.height - self.height) / 2;
         colorize: !root.enabled ? Theme.subtle : root.active ? Theme.accent : Theme.muted;
     }
-    ta := TouchArea {
+    ta := TipArea {
+        tip: root.tip;
         enabled: root.enabled;
         mouse-cursor: MouseCursor.pointer;
         clicked => { root.clicked(); }
@@ -66,6 +105,7 @@ component IconButton inherits Rectangle {
 component ActionButton inherits Rectangle {
     in property <string> text;
     in property <bool> primary: false;
+    in property <string> tip;
     callback clicked();
     height: 30px;
     min-width: 70px;
@@ -81,7 +121,8 @@ component ActionButton inherits Rectangle {
         horizontal-alignment: center;
         vertical-alignment: center;
     }
-    ta := TouchArea {
+    ta := TipArea {
+        tip: root.tip;
         mouse-cursor: MouseCursor.pointer;
         clicked => { root.clicked(); }
     }
@@ -112,7 +153,8 @@ component ConfirmButton inherits Rectangle {
             vertical-alignment: center;
         }
     }
-    ta := TouchArea {
+    ta := TipArea {
+        tip: "Удаляет со второго нажатия, чтобы не стереть случайно";
         mouse-cursor: MouseCursor.pointer;
         clicked => {
             if (root.armed) {
@@ -132,10 +174,12 @@ component ConfirmButton inherits Rectangle {
 
 // Small text link used in the settings.
 component LinkText inherits Text {
+    in property <string> tip;
     callback clicked();
     color: Theme.accent;
     font-size: 11px;
-    TouchArea {
+    TipArea {
+        tip: root.tip;
         mouse-cursor: MouseCursor.pointer;
         clicked => { root.clicked(); }
     }
@@ -223,7 +267,8 @@ component HotkeyField inherits Rectangle {
             vertical-alignment: center;
         }
     }
-    TouchArea {
+    TipArea {
+        tip: "Нажми и зажми новое сочетание клавиш.\nEsc — отмена";
         mouse-cursor: MouseCursor.pointer;
         clicked => { fs.focus(); }
     }
@@ -366,6 +411,14 @@ export component MainWindow inherits Window {
     in property <string> body-text;
     in property <string> question-text;
     in property <bool> busy;
+
+    // update strip
+    in property <bool> update-shown;
+    in property <bool> update-busy;
+    in property <string> update-text;
+    in-out property <bool> auto-update: true;
+    in property <string> version-text;
+    in property <string> update-status;
     in property <string> pos-text;
     in property <bool> prev-enabled;
     in property <bool> next-enabled;
@@ -403,16 +456,10 @@ export component MainWindow inherits Window {
     in property <[string]> hotkey-labels;
     in property <[string]> hotkey-values;
     property <[string]> gemini-models: [
-        "Gemini 3.5 Flash-Lite · по умолчанию",
-        "Gemini 3.8 Flash · актуальная",
-        "Gemini 3.7 Flash",
-        "Gemini 3.6 Flash",
-        "Gemini 3.5 Flash",
-        "Gemini 3.1 Flash-Lite · экономная",
-        "Gemini 3.1 Pro · предварительная",
-        "Gemini 3 Flash · предварительная",
-        "Gemini 2.5 Pro · предыдущая",
-        "Gemini 2.5 Flash · предыдущая",
+        "Gemini 3.5 Flash-Lite · быстрая, по умолчанию",
+        "Gemini 3.8 Flash · новая, умнее",
+        "Gemini 3.1 Pro · самая умная, медленнее",
+        "Gemini 2.5 Flash · запасная",
         "Своя модель…",
     ];
 
@@ -421,6 +468,9 @@ export component MainWindow inherits Window {
     callback next();
     callback retry();
     callback stop();
+    callback update-now();
+    callback update-dismiss();
+    callback check-updates();
     callback check-key();
     callback prompt-preset(int);
     callback copy();
@@ -455,7 +505,7 @@ export component MainWindow inherits Window {
 
     root-scope := FocusScope {
         key-pressed(e) => {
-            if (e.text == Key.Escape && !root.pinned) {
+            if (e.text == Key.Escape && (!root.pinned || root.busy)) {
                 root.escape-pressed();
                 return accept;
             }
@@ -497,18 +547,59 @@ export component MainWindow inherits Window {
                         padding-top: 8px;
                         padding-bottom: 8px;
                         spacing: 2px;
-                        IconButton { icon: @image-url("icons/left.svg"); enabled: root.prev-enabled; clicked => { root.prev(); } }
+                        IconButton { icon: @image-url("icons/left.svg"); tip: "Предыдущий ответ"; enabled: root.prev-enabled; clicked => { root.prev(); } }
                         Text { text: root.pos-text; color: Theme.muted; font-size: 11px; vertical-alignment: center; horizontal-alignment: center; min-width: 34px; }
-                        IconButton { icon: @image-url("icons/right.svg"); enabled: root.next-enabled; clicked => { root.next(); } }
+                        IconButton { icon: @image-url("icons/right.svg"); tip: "Следующий ответ"; enabled: root.next-enabled; clicked => { root.next(); } }
                         Rectangle { width: 8px; }
-                        if !root.busy: IconButton { icon: @image-url("icons/retry.svg"); enabled: root.retry-enabled; clicked => { root.retry(); } }
-                        if root.busy: IconButton { icon: @image-url("icons/stop.svg"); active: true; clicked => { root.stop(); } }
-                        IconButton { icon: @image-url("icons/copy.svg"); active: root.copy-done; clicked => { root.copy(); } }
+                        if !root.busy: IconButton { icon: @image-url("icons/retry.svg"); tip: "Спросить заново (Alt+S).\nЕсли ответ уже пришёл, модель посчитает его\nневерным и попробует ответить по-другому"; enabled: root.retry-enabled; clicked => { root.retry(); } }
+                        if root.busy: IconButton { icon: @image-url("icons/stop.svg"); tip: "Остановить ответ (Esc)"; active: true; clicked => { root.stop(); } }
+                        IconButton { icon: @image-url("icons/copy.svg"); tip: "Скопировать весь ответ.\nЧасть ответа можно выделить мышью и нажать Ctrl+C"; active: root.copy-done; clicked => { root.copy(); } }
                         Rectangle { horizontal-stretch: 1; }
-                        IconButton { icon: @image-url("icons/history.svg"); active: root.history-open; clicked => { root.toggle-history(); } }
-                        IconButton { icon: @image-url("icons/settings.svg"); active: root.settings-open; clicked => { root.toggle-settings(); } }
-                        IconButton { icon: @image-url("icons/pin.svg"); active: root.pinned; clicked => { root.toggle-pin(); } }
-                        IconButton { icon: @image-url("icons/close.svg"); clicked => { root.hide-window(); } }
+                        IconButton { icon: @image-url("icons/history.svg"); tip: "История: прошлые вопросы и ответы.\nОтвет из истории можно уточнить"; active: root.history-open; clicked => { root.toggle-history(); } }
+                        IconButton { icon: @image-url("icons/settings.svg"); tip: "Настройки"; active: root.settings-open; clicked => { root.toggle-settings(); } }
+                        IconButton { icon: @image-url("icons/pin.svg"); tip: "Закрепить окно: оно не будет прятаться,\nкогда кликаешь в другое место или жмёшь Esc"; active: root.pinned; clicked => { root.toggle-pin(); } }
+                        IconButton { icon: @image-url("icons/close.svg"); tip: "Спрятать окно (Esc) и остановить ответ.\nПрограмма остаётся в трее"; clicked => { root.hide-window(); } }
+                    }
+                }
+
+                // ---- "new version" strip ----
+                if root.update-shown && !root.overlay-view && !root.settings-open: Rectangle {
+                    height: 40px;
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        padding-bottom: 6px;
+                        Rectangle {
+                            background: Theme.accent-soft;
+                            border-radius: 10px;
+                            HorizontalLayout {
+                                padding-left: 12px;
+                                padding-right: 3px;
+                                spacing: 4px;
+                                Text {
+                                    text: root.update-text;
+                                    color: Theme.fg;
+                                    font-size: 12px;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                    overflow: TextOverflow.elide;
+                                }
+                                if !root.update-busy: ActionButton {
+                                    y: 2px;
+                                    height: 30px;
+                                    text: "Обновить";
+                                    primary: true;
+                                    tip: "Скачать и поставить новую версию.\nПрограмма перезапустится сама,\nнастройки и история сохранятся";
+                                    clicked => { root.update-now(); }
+                                }
+                                if !root.update-busy: IconButton {
+                                    y: 3px;
+                                    icon: @image-url("icons/close.svg");
+                                    tip: "Напомнить при следующем запуске";
+                                    clicked => { root.update-dismiss(); }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -621,6 +712,7 @@ export component MainWindow inherits Window {
                             IconButton {
                                 y: 6px;
                                 icon: Theme.dark ? @image-url("icons/sun.svg") : @image-url("icons/moon.svg");
+                                tip: "Светлая / тёмная тема";
                                 clicked => { root.toggle-theme(); }
                             }
                         }
@@ -649,7 +741,7 @@ export component MainWindow inherits Window {
                                         model: root.gemini-models;
                                         current-index <=> root.model-index;
                                     }
-                                    if root.model-index == 10: Field {
+                                    if root.model-index == root.gemini-models.length - 1: Field {
                                         text <=> root.model-custom;
                                         placeholder: "Например: gemini-3.8-flash";
                                     }
@@ -670,7 +762,7 @@ export component MainWindow inherits Window {
                                     spacing: 14px;
                                     alignment: start;
                                     LinkText { text: root.api-key-link-text; clicked => { root.open-key-link(); } }
-                                    LinkText { text: "Проверить ключ"; clicked => { root.check-key(); } }
+                                    LinkText { text: "Проверить ключ"; tip: "Проверить, что ключ рабочий\nи выбранная модель доступна"; clicked => { root.check-key(); } }
                                 }
                                 if root.key-check-text != "": Label {
                                     text: root.key-check-text;
@@ -686,9 +778,9 @@ export component MainWindow inherits Window {
                                 HorizontalLayout {
                                     spacing: 6px;
                                     alignment: start;
-                                    ActionButton { text: "Только ответ"; clicked => { root.prompt-preset(0); } }
-                                    ActionButton { text: "С пояснением"; clicked => { root.prompt-preset(1); } }
-                                    ActionButton { text: "Подробно"; clicked => { root.prompt-preset(2); } }
+                                    ActionButton { text: "Только ответ"; tip: "Короткий ответ без объяснений (как раньше)"; clicked => { root.prompt-preset(0); } }
+                                    ActionButton { text: "С пояснением"; tip: "Ответ и пара предложений, почему так"; clicked => { root.prompt-preset(1); } }
+                                    ActionButton { text: "Подробно"; tip: "Подробное решение по шагам.\nМодель думает дольше"; clicked => { root.prompt-preset(2); } }
                                 }
                                 Label { text: "Промпт, который получает нейросеть (можно переписать своими словами, в том числе по-русски)"; wrap: TextWrap.word-wrap; }
                                 FocusScope {
@@ -719,7 +811,7 @@ export component MainWindow inherits Window {
                                         horizontal-stretch: 1;
                                         vertical-alignment: center;
                                     }
-                                    ActionButton { text: "Сбросить"; clicked => { root.prompt-preset(0); } }
+                                    ActionButton { text: "Сбросить"; tip: "Вернуть встроенный промпт «Только ответ»"; clicked => { root.prompt-preset(0); } }
                                 }
                             }
 
@@ -771,6 +863,19 @@ export component MainWindow inherits Window {
 
                             Card {
                                 index: "05";
+                                title: "Обновления";
+                                Check { label: "Проверять обновления автоматически"; checked <=> root.auto-update; }
+                                HorizontalLayout {
+                                    spacing: 14px;
+                                    alignment: start;
+                                    Label { text: root.version-text; vertical-alignment: center; }
+                                    LinkText { text: "Проверить сейчас"; tip: "Спросить у GitHub, есть ли новая версия"; clicked => { root.check-updates(); } }
+                                }
+                                if root.update-status != "": Label { text: root.update-status; wrap: TextWrap.word-wrap; }
+                            }
+
+                            Card {
+                                index: "06";
                                 title: "Горячие клавиши";
                                 for label[i] in root.hotkey-labels: HorizontalLayout {
                                     spacing: 8px;
@@ -784,7 +889,7 @@ export component MainWindow inherits Window {
                                 HorizontalLayout {
                                     spacing: 8px;
                                     alignment: start;
-                                    ActionButton { text: "По умолчанию"; clicked => { root.reset-hotkeys(); } }
+                                    ActionButton { text: "По умолчанию"; tip: "Вернуть Alt+Q, Alt+W, Alt+E, Alt+S"; clicked => { root.reset-hotkeys(); } }
                                     ConfirmButton { text: "Очистить историю"; confirm-text: "Удалить всю историю?"; confirmed => { root.clear-history(); } }
                                 }
                             }
@@ -804,8 +909,8 @@ export component MainWindow inherits Window {
                                 horizontal-stretch: 1;
                                 overflow: TextOverflow.elide;
                             }
-                            ActionButton { text: "Выйти"; clicked => { root.exit-app(); } }
-                            ActionButton { text: "Готово"; primary: true; clicked => { root.save-settings(); } }
+                            ActionButton { text: "Выйти"; tip: "Сохранить настройки и полностью закрыть программу"; clicked => { root.exit-app(); } }
+                            ActionButton { text: "Готово"; tip: "Сохранить настройки и вернуться к ответу"; primary: true; clicked => { root.save-settings(); } }
                         }
                     }
                 }
@@ -828,7 +933,8 @@ export component MainWindow inherits Window {
                             border-radius: 8px;
                             clip: true;
                             Image { source: t.img; image-fit: ImageFit.cover; width: parent.width; height: parent.height; }
-                            TouchArea {
+                            TipArea {
+                                tip: "Нажми, чтобы убрать эту картинку";
                                 mouse-cursor: MouseCursor.pointer;
                                 clicked => { root.remove-image(i); }
                             }
@@ -894,7 +1000,8 @@ export component MainWindow inherits Window {
                                     y: (parent.height - self.height) / 2;
                                     colorize: Theme.accent-ink;
                                 }
-                                TouchArea {
+                                TipArea {
+                                    tip: "Отправить (Enter).\nCtrl+V в поле вставляет картинку из буфера";
                                     mouse-cursor: MouseCursor.pointer;
                                     clicked => { root.submit(root.composer-text); }
                                 }
@@ -923,7 +1030,8 @@ export component MainWindow inherits Window {
                     stroke: Theme.subtle;
                     stroke-width: 1.2px;
                 }
-                TouchArea {
+                TipArea {
+                    tip: "Потяни, чтобы изменить размер окна";
                     mouse-cursor: MouseCursor.nwse-resize;
                     pointer-event(e) => {
                         if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
@@ -933,6 +1041,28 @@ export component MainWindow inherits Window {
                     moved => {
                         if (self.pressed) { root.resize-move(); }
                     }
+                }
+            }
+
+            // tooltip: last child, so it is drawn above everything else
+            if Tip.text != "" && !root.overlay-view: Rectangle {
+                width: min(tip-text.preferred-width + 18px, parent.width - 16px);
+                height: tip-text.preferred-height + 12px;
+                x: max(8px, min(Tip.x, parent.width - self.width - 8px));
+                // below the control, or above it when there is no room at the bottom
+                y: Tip.y + Tip.anchor-h + 6px + self.height > parent.height - 4px ? max(4px, Tip.y - self.height - 6px) : Tip.y + Tip.anchor-h + 6px;
+                background: Theme.raised;
+                border-radius: 7px;
+                border-width: 1px;
+                border-color: Theme.line-strong;
+                drop-shadow-blur: 10px;
+                drop-shadow-color: #00000050;
+                tip-text := Text {
+                    x: 9px;
+                    y: 6px;
+                    text: Tip.text;
+                    color: Theme.fg;
+                    font-size: 11px;
                 }
             }
         }

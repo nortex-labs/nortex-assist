@@ -83,13 +83,18 @@ pub fn encode_rgba(width: u32, height: u32, rgba: Vec<u8>) -> Option<String> {
     Some(base64::engine::general_purpose::STANDARD.encode(buf))
 }
 
+/// An image ready to attach: base64 JPEG for the model and a small RGBA thumbnail for the UI.
+pub type Shot = (String, (u32, u32, Vec<u8>));
+
+pub fn prepare_shot(w: u32, h: u32, rgba: Vec<u8>) -> Option<Shot> {
+    let thumb = thumbnail(w, h, &rgba)?;
+    Some((encode_rgba(w, h, rgba)?, thumb))
+}
+
 /// Returns the clipboard image as a base64 JPEG together with a small RGBA thumbnail.
-pub fn clipboard_image() -> Option<(String, (u32, u32, Vec<u8>))> {
+pub fn clipboard_image() -> Option<Shot> {
     let img = Clipboard::new().ok()?.get_image().ok()?;
-    let (w, h) = (img.width as u32, img.height as u32);
-    let bytes = img.bytes.into_owned();
-    let thumb = thumbnail(w, h, &bytes)?;
-    Some((encode_rgba(w, h, bytes)?, thumb))
+    prepare_shot(img.width as u32, img.height as u32, img.bytes.into_owned())
 }
 
 pub fn thumbnail(width: u32, height: u32, rgba: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
@@ -100,7 +105,7 @@ pub fn thumbnail(width: u32, height: u32, rgba: &[u8]) -> Option<(u32, u32, Vec<
 
 /// Opens the Windows snipping overlay and waits (up to 60 s) for an image to land in the clipboard.
 /// A newer call bumps `token`, which cancels this one.
-pub fn snip(token: &AtomicU64, my: u64) -> Option<String> {
+pub fn snip(token: &AtomicU64, my: u64) -> Option<(u32, u32, Vec<u8>)> {
     let prev = snapshot();
     if let Ok(mut cb) = Clipboard::new() {
         let _ = cb.clear();
@@ -115,7 +120,7 @@ pub fn snip(token: &AtomicU64, my: u64) -> Option<String> {
             let (w, h) = (img.width as u32, img.height as u32);
             if w > 0 && h > 0 {
                 restore(prev);
-                return encode_rgba(w, h, img.bytes.into_owned());
+                return Some((w, h, img.bytes.into_owned()));
             }
         }
     }

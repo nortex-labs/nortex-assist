@@ -4,7 +4,7 @@
 use std::ffi::c_void;
 use std::time::Duration;
 use windows::core::w;
-use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HWND, POINT};
+use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HWND, POINT};
 use windows::Win32::Graphics::Gdi::{
     BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits, GetMonitorInfoW, MonitorFromPoint,
     MonitorFromWindow, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CAPTUREBLT, DIB_RGB_COLORS, MONITORINFO,
@@ -191,7 +191,15 @@ pub fn capture_cursor_monitor() -> Option<(u32, u32, Vec<u8>)> {
 pub fn acquire_single_instance() -> bool {
     unsafe {
         match CreateMutexW(None, true, w!("Local\\NortexAssistSingleton")) {
-            Ok(_handle) => GetLastError() != ERROR_ALREADY_EXISTS, // handle is intentionally kept for the process lifetime
+            Ok(handle) => {
+                if GetLastError() == ERROR_ALREADY_EXISTS {
+                    // let go of it, so the name disappears once the other instance exits (see the update restart)
+                    let _ = CloseHandle(handle);
+                    false
+                } else {
+                    true // the handle is intentionally kept for the process lifetime
+                }
+            }
             Err(_) => true,
         }
     }

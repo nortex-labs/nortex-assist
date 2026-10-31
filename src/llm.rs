@@ -71,7 +71,9 @@ fn system_prompt(cfg: &Config, simple: bool) -> &str {
 
 const REJECT_NOTE: &str = "Your previous answer was wrong or not good enough. Reconsider the task carefully and answer again. Do not repeat the same answer unless you have checked that it is correct.";
 
-const EXPLANATION_RE: &str = r"(?i)\b(?:explain(?:ation)?|in detail|detailed|step[ -]?by[ -]?step|show(?: me)? (?:your )?(?:work|steps)|walk me through|justify|derive|reason(?:ing)?|why|how (?:does|do|did|is|are|can|could|would)|solve|analy[sz](?:e|es|ed|ing)?|compare|make a plan)\b|об[ъьы]?ясн(?:и|ите|ить|ение|ением|ения)|поясн(?:и|ите|ить|ение|ением|ения)|подробн(?:о|ее|ый|ая|ое|ую)|разв[её]рнут(?:о|ее|ый|ая|ое|ую)|по шагам|пошагово|покажи(?:те)?\s+(?:ход|решение|вывод)|обоснуй(?:те)?|докажи(?:те)?|почему|зачем|как работает|как устроен|в чем причина|в чём причина|реш(?:и|ите|ить)|разбер(?:и|ите|ись|ся|ать)|проанализир(?:уй|уйте|овать)|сравн(?:и|ите|ить)|состав(?:ь|ьте|ить)\s+(?:план|решение)";
+const EXPLANATION_RE: &str = r"(?i)\b(?:explain(?:ation)?|in detail|detailed|step[ -]?by[ -]?step|show(?: me)? (?:your )?(?:work|steps)|walk me through|justify)\b|об[ъьы]?ясн(?:и|ите|ить|ение|ением|ения)|поясн(?:и|ите|ить|ение|ением|ения)|подробн(?:о|ее|ый|ая|ое|ую)|разв[её]рнут(?:о|ее|ый|ая|ое|ую)|по шагам|пошагово|покажи(?:те)?\s+(?:ход|решение|вывод)|обоснуй(?:те)?|докажи(?:те)?";
+// Only an explicit request for an explanation (or the "detailed" style) makes the model think
+// longer; plain "why"/"solve" questions used to trigger it and made most answers slow.
 
 #[derive(Clone, Debug)]
 pub struct Turn {
@@ -116,6 +118,11 @@ pub fn sanitize(r: &Request) -> Result<Request, String> {
         return Err("Пустой запрос".into());
     }
     Ok(out)
+}
+
+/// Longer thinking and a bigger answer: asked for explicitly, or the "detailed" style is on.
+fn wants_detail(cfg: &Config, r: &Request) -> bool {
+    is_detailed(r) || cfg.prompt.trim() == DETAILED_PROMPT.trim()
 }
 
 pub fn is_detailed(r: &Request) -> bool {
@@ -283,7 +290,7 @@ fn gemini_once(cfg: &Config, r: &Request, on_chunk: &dyn Fn(&str), cancel: &dyn 
     if !Regex::new(r"(?i)^gemini-[a-z0-9.\-]+$").unwrap().is_match(model) {
         return Err("Недопустимое имя модели".into());
     }
-    let detailed = is_detailed(r);
+    let detailed = wants_detail(cfg, r);
     let simple = cfg.overlay_mode && !detailed;
     let deliberate = detailed || (!simple && !r.rejected.is_empty());
 
@@ -365,7 +372,7 @@ fn groq_once(cfg: &Config, r: &Request, on_chunk: &dyn Fn(&str), cancel: &dyn Fn
     if r.images.len() > 3 {
         return Err("Groq принимает не более трёх изображений за запрос.".into());
     }
-    let detailed = is_detailed(r);
+    let detailed = wants_detail(cfg, r);
     let simple = cfg.overlay_mode && !detailed;
     let deliberate = detailed || !r.rejected.is_empty();
     let question = format!("{}\n\n{}", system_prompt(cfg, simple), image_question(r));
