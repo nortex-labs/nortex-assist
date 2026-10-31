@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 /// "owner/repo" on GitHub whose releases carry the new versions.
-pub const REPO: &str = "diepio1232-ux/nortex-assist";
+pub const REPO: &str = "nortex-labs/nortex-assist";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Command-line flag of a freshly swapped portable exe: wait for the old process to exit first.
 pub const AFTER_UPDATE_ARG: &str = "--after-update";
