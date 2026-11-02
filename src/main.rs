@@ -36,7 +36,6 @@ const MAX_SHOTS: usize = 4;
 const NORMAL_SIZE: (f32, f32) = (540.0, 680.0);
 const SETTINGS_SIZE: (f32, f32) = (720.0, 600.0);
 const BLUR_GRACE: Duration = Duration::from_millis(400);
-const OVERLAY_SIZE: (f32, f32) = (460.0, 150.0);
 const OVERLAY_TIMEOUT: Duration = Duration::from_secs(20);
 
 // A saved model that is not in this list shows up as "own model" with its id filled in.
@@ -365,28 +364,47 @@ impl App {
 
     fn place_window(&mut self) {
         let ui = self.ui();
-        let scale = ui.window().scale_factor();
         let r = if self.overlay_view {
-            let wa = native::work_area_cursor();
-            let (w, h) = ((OVERLAY_SIZE.0 * scale) as u32, (OVERLAY_SIZE.1 * scale) as u32);
-            let m = (16.0 * scale) as i32;
-            self.apply_rect(clamp_rect(Rect { x: wa.0 + wa.2 - w as i32 - m, y: wa.1 + wa.3 - h as i32 - m, w, h }, wa));
+            ui.set_ov_font(self.cfg.overlay_font() as f32);
+            self.fit_overlay();
             ui.set_win_opacity(1.0);
             return;
         } else {
             let wa = native::work_area(self.hwnd());
             let r = match self.prev_bounds {
                 Some(_) => self.window_rect(), // settings are open: they already sized the window
-                None => self.cfg.bounds.unwrap_or_else(|| {
-                    let (w, h) = ((NORMAL_SIZE.0 * scale) as u32, (NORMAL_SIZE.1 * scale) as u32);
-                    let m = (16.0 * scale) as i32;
-                    Rect { x: wa.0 + wa.2 - w as i32 - m, y: wa.1 + wa.3 - h as i32 - m, w, h }
-                }),
+                None => self.cfg.bounds.unwrap_or_else(|| self.default_rect()),
             };
             clamp_rect(r, wa)
         };
         self.apply_rect(r);
         ui.set_win_opacity(1.0);
+    }
+
+    /// Where the regular window opens when it has never been moved: bottom right corner.
+    fn default_rect(&self) -> Rect {
+        let scale = self.ui().window().scale_factor();
+        let wa = native::work_area(self.hwnd());
+        let (w, h) = ((NORMAL_SIZE.0 * scale) as u32, (NORMAL_SIZE.1 * scale) as u32);
+        let m = (16.0 * scale) as i32;
+        Rect { x: wa.0 + wa.2 - w as i32 - m, y: wa.1 + wa.3 - h as i32 - m, w, h }
+    }
+
+    /// The game overlay opens at the top left corner of the regular chat window (wherever the user
+    /// left it) and is exactly as big as its text: it grows right and down while the answer streams in.
+    fn fit_overlay(&self) {
+        if !self.overlay_view || !self.visible {
+            return;
+        }
+        let ui = self.ui();
+        let scale = ui.window().scale_factor();
+        let anchor = self.prev_bounds.or(self.cfg.bounds).unwrap_or_else(|| self.default_rect());
+        let wa = native::work_area_at(anchor.x, anchor.y);
+        let (w, h) = ((ui.get_ov_want_w() * scale).ceil() as u32, (ui.get_ov_want_h() * scale).ceil() as u32);
+        let r = clamp_rect(Rect { x: anchor.x, y: anchor.y, w, h }, wa);
+        if self.window_rect() != r {
+            self.apply_rect(r);
+        }
     }
 
     fn apply_tray(&self) {
@@ -526,6 +544,7 @@ impl App {
             return;
         }
         if self.overlay_view {
+            self.fit_overlay();
             // the overlay never has focus, so it leaves on a timer (or when the hotkey is pressed again)
             if self.auto_hide.is_some_and(|t| Instant::now() >= t) {
                 self.hide_window();
@@ -590,6 +609,7 @@ impl App {
         ui.set_thinking(false);
         ui.set_body_text(text.into());
         self.set_nav(false);
+        self.fit_overlay();
     }
 
     fn set_busy(&mut self, on: bool) {
@@ -616,6 +636,7 @@ impl App {
         };
         ui.set_question_text(question_line(&e.question).into());
         ui.set_body_text(e.text.as_str().into());
+        self.fit_overlay();
         let follow_up = !self.overlay_view && e.chat == Some(self.chat_id) && self.idx + 1 == self.answers.len();
         self.set_nav(true);
         if follow_up {
@@ -755,6 +776,7 @@ impl App {
         self.show_status("Думаю…");
         self.ui().set_question_text(question_line(&history::describe(&req)).into());
         self.ui().set_thinking(true); // dots until the first words arrive
+        self.fit_overlay();
         self.live_req.store(id, Ordering::SeqCst);
         self.streaming.clear();
         self.in_flight = Some((req.clone(), record_q.clone(), chat));
@@ -777,6 +799,7 @@ impl App {
             let ui = self.ui();
             ui.set_thinking(false);
             ui.set_body_text(text.into());
+            self.fit_overlay(); // the background grows right behind the text
         }
     }
 
@@ -1260,6 +1283,8 @@ impl App {
         ui.set_autostart(self.cfg.autostart);
         ui.set_history_enabled(self.cfg.history_on());
         ui.set_overlay_mode(self.cfg.overlay_mode);
+        ui.set_overlay_fonts(ModelRc::new(VecModel::from(config::OVERLAY_FONTS.iter().map(|&f| f as i32).collect::<Vec<_>>())));
+        ui.set_overlay_font_index(self.cfg.overlay_font_index() as i32);
         ui.set_shot_mode(self.cfg.shot_mode_index() as i32);
         ui.set_shot_hotkey(self.cfg.hotkeys().screenshot.into());
         ui.set_free_hotkey(self.cfg.hotkeys().free.into());
@@ -1386,6 +1411,8 @@ impl App {
         self.cfg.history = Some(input.history);
         self.cfg.autostart = input.autostart;
         self.cfg.overlay_mode = ui.get_overlay_mode();
+        let fi = (ui.get_overlay_font_index().max(0) as usize).min(config::OVERLAY_FONTS.len() - 1);
+        self.cfg.overlay_font = Some(config::OVERLAY_FONTS[fi]);
         let shot = (ui.get_shot_mode().max(0) as usize).min(SHOT_MODES.len() - 1);
         self.cfg.shot_mode = SHOT_MODES[shot].to_string();
         self.cfg.full_screenshot = shot == 1;

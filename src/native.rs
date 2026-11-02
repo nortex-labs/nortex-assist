@@ -118,12 +118,10 @@ pub fn work_area(h: Option<isize>) -> (i32, i32, i32, i32) {
     }
 }
 
-/// Work area (x, y, w, h) of the monitor the cursor is on.
-pub fn work_area_cursor() -> (i32, i32, i32, i32) {
+/// Work area (x, y, w, h) of the monitor that contains the point (or the nearest one).
+pub fn work_area_at(x: i32, y: i32) -> (i32, i32, i32, i32) {
     unsafe {
-        let mut p = POINT::default();
-        let _ = GetCursorPos(&mut p);
-        let mon = MonitorFromPoint(p, MONITOR_DEFAULTTONEAREST);
+        let mon = MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST);
         let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
         if GetMonitorInfoW(mon, &mut mi).as_bool() {
             let r = mi.rcWork;

@@ -500,6 +500,103 @@ component OpacitySlider inherits Rectangle {
     }
 }
 
+// Slider that snaps to fixed steps; every step is marked and labelled ("12 px", "14 px", ...).
+component StepSlider inherits Rectangle {
+    in property <[int]> steps;
+    in property <string> unit: " px";
+    in-out property <int> index;
+    callback changed(int);
+    height: 40px;
+    property <length> pad: 16px;
+    property <length> span: root.width - 2 * root.pad;
+    property <int> last: Math.max(root.steps.length - 1, 1);
+    function pos(i: int) -> length {
+        return root.pad + root.span * i / root.last;
+    }
+    function apply(x: length) {
+        if (Math.round(Math.clamp((x - root.pad) / root.span * root.last, 0, root.last)) != root.index) {
+            root.index = Math.round(Math.clamp((x - root.pad) / root.span * root.last, 0, root.last));
+            root.changed(root.index);
+        }
+    }
+    Rectangle {
+        x: root.pad;
+        y: 9px;
+        width: root.span;
+        height: 4px;
+        border-radius: 2px;
+        background: Theme.line-strong;
+    }
+    Rectangle {
+        x: root.pad;
+        y: 9px;
+        width: root.pos(root.index) - root.pad;
+        height: 4px;
+        border-radius: 2px;
+        background: Theme.accent;
+        animate width { duration: 120ms; easing: ease-out; }
+    }
+    // one notch per step
+    for v[i] in root.steps: Rectangle {
+        x: root.pos(i) - 4px;
+        y: 7px;
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        background: i <= root.index ? Theme.accent : Theme.line-strong;
+    }
+    for v[i] in root.steps: Text {
+        x: root.pos(i) - 24px;
+        y: 22px;
+        width: 48px;
+        horizontal-alignment: center;
+        text: v + root.unit;
+        font-size: 10px;
+        font-weight: i == root.index ? 700 : 400;
+        color: i == root.index ? Theme.accent-text : Theme.muted;
+    }
+    Rectangle {
+        width: sta.has-hover || sta.pressed ? 18px : 16px;
+        height: self.width;
+        x: root.pos(root.index) - self.width / 2;
+        y: 11px - self.height / 2;
+        border-radius: self.width / 2;
+        background: Theme.accent;
+        animate x { duration: 120ms; easing: ease-out; }
+        animate width { duration: 120ms; easing: ease-out; }
+    }
+    sta := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                root.apply(self.mouse-x);
+            }
+        }
+        moved => {
+            if (self.pressed) { root.apply(self.mouse-x); }
+        }
+    }
+}
+
+// What the game-overlay window looks like with a given text size (same paddings and corners).
+component OverlaySample inherits Rectangle {
+    in property <string> text;
+    in property <length> font;
+    width: st.preferred-width + 2 * root.font * 0.9 + 2px;
+    height: st.preferred-height + 2 * root.font * 0.55 + 2px;
+    animate width, height { duration: 120ms; easing: ease-out; }
+    background: Theme.window;
+    border-radius: Math.min(18px, root.font * 0.8);
+    border-width: 1px;
+    border-color: Theme.line-strong;
+    st := Text {
+        text: root.text;
+        color: Theme.fg;
+        font-size: root.font;
+        font-weight: 500;
+    }
+}
+
 component Card inherits Rectangle {
     in property <string> index;
     in property <string> title;
@@ -650,8 +747,8 @@ export component MainWindow inherits Window {
     default-font-size: 13px;
     preferred-width: 540px;
     preferred-height: 680px;
-    min-width: root.min-w;
-    min-height: root.min-h;
+    min-width: root.overlay-view ? 1px : root.min-w;
+    min-height: root.overlay-view ? 1px : root.min-h;
 
     in property <length> min-w: 280px;
     in property <length> min-h: 120px;
@@ -661,6 +758,15 @@ export component MainWindow inherits Window {
     in property <bool> pinned: false;
     // compact, click-through presentation used by the game-overlay mode
     in property <bool> overlay-view: false;
+    // overlay text size; the overlay window is exactly as big as its text (Rust reads ov-want-*)
+    in property <length> ov-font: 16px;
+    property <length> ov-pad-x: root.ov-font * 0.9;
+    property <length> ov-pad-y: root.ov-font * 0.55;
+    // "Думаю" plus the three dots
+    property <length> ov-extra: root.thinking ? root.ov-font + 9px : 0px;
+    property <length> ov-text-w: Math.min(ov-measure.preferred-width + root.ov-extra + 2px, root.ov-font * 28);
+    out property <length> ov-want-w: root.ov-text-w + 2 * root.ov-pad-x + 2px;
+    out property <length> ov-want-h: Math.min(ov-wrap.preferred-height, root.ov-font * 1.4 * 8) + 2 * root.ov-pad-y + 2px;
 
     // answer area
     in property <string> body-text;
@@ -710,6 +816,8 @@ export component MainWindow inherits Window {
     in-out property <bool> autostart;
     in-out property <bool> history-enabled;
     in-out property <bool> overlay-mode;
+    in property <[int]> overlay-fonts: [12, 14, 16, 18, 20, 24, 28, 32];
+    in-out property <int> overlay-font-index: 2;
     in-out property <bool> show-tray: true;
     // own accent colour: palette state (hue in degrees, saturation and value 0..1) and the HEX field
     in-out property <bool> custom-open: false;
@@ -802,7 +910,7 @@ export component MainWindow inherits Window {
             animate opacity { duration: root.appear-on ? 180ms : 0ms; easing: ease-out; }
             animate y { duration: root.appear-on ? 220ms : 0ms; easing: ease-out; }
             background: Theme.window;
-            border-radius: 18px;
+            border-radius: root.overlay-view ? Math.min(18px, root.ov-font * 0.8) : 18px;
             border-width: 1px;
             border-color: Theme.line-strong;
             clip: true;
@@ -916,21 +1024,22 @@ export component MainWindow inherits Window {
                 if root.overlay-view: Rectangle {
                     vertical-stretch: 1;
                     if !root.thinking: Text {
-                        x: 16px;
-                        width: parent.width - 32px;
-                        height: parent.height;
+                        x: root.ov-pad-x + 1px;
+                        y: root.ov-pad-y + 1px;
+                        width: parent.width - 2 * root.ov-pad-x - 2px;
+                        height: parent.height - 2 * root.ov-pad-y - 2px;
                         text: root.body-text;
                         wrap: TextWrap.word-wrap;
                         overflow: TextOverflow.elide;
                         horizontal-alignment: center;
                         vertical-alignment: center;
                         color: Theme.fg;
-                        font-size: 16px;
+                        font-size: root.ov-font;
                         font-weight: 500;
                     }
                     if root.thinking: HorizontalLayout {
                         alignment: center;
-                        Thinking { size: 16px; }
+                        Thinking { size: root.ov-font; }
                     }
                 }
 
@@ -1260,6 +1369,18 @@ export component MainWindow inherits Window {
                                     font-size: 10px;
                                     wrap: TextWrap.word-wrap;
                                 }
+                                if root.overlay-mode: Label { text: "Размер текста в окне поверх игр. Окно само подстраивается под длину ответа и открывается там, где верхний левый угол окна чата."; wrap: TextWrap.word-wrap; }
+                                if root.overlay-mode: StepSlider {
+                                    steps: root.overlay-fonts;
+                                    index <=> root.overlay-font-index;
+                                }
+                                if root.overlay-mode: HorizontalLayout {
+                                    alignment: start;
+                                    spacing: 10px;
+                                    Label { text: "Так будет выглядеть:"; vertical-alignment: center; }
+                                    OverlaySample { text: "B"; font: root.overlay-fonts[root.overlay-font-index] * 1px; }
+                                    OverlaySample { text: "Канберра"; font: root.overlay-fonts[root.overlay-font-index] * 1px; }
+                                }
                             }
 
                             Card {
@@ -1442,6 +1563,22 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
+            }
+
+            // invisible copies of the overlay text, used only to measure it
+            ov-measure := Text {
+                visible: false;
+                text: root.thinking ? "Думаю" : root.body-text;
+                font-size: root.ov-font;
+                font-weight: 500;
+            }
+            ov-wrap := Text {
+                visible: false;
+                width: root.ov-text-w;
+                text: root.thinking ? "Думаю" : root.body-text;
+                wrap: TextWrap.word-wrap;
+                font-size: root.ov-font;
+                font-weight: 500;
             }
 
             // resize grip

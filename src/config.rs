@@ -12,6 +12,9 @@ pub const DEFAULT_CUSTOM: (u8, u8, u8) = (0x4f, 0xd1, 0xc5);
 pub const GROQ_MODEL: &str = "qwen/qwen3.8-27b";
 /// Lowest window opacity (10 %): below this the window is too easy to lose.
 pub const MIN_OPACITY: f32 = 0.10;
+/// Text sizes (px) offered for the game-overlay window; the window itself fits the text.
+pub const OVERLAY_FONTS: [u32; 8] = [12, 14, 16, 18, 20, 24, 28, 32];
+pub const DEFAULT_OVERLAY_FONT: u32 = 16;
 pub const MAX_PROMPT: usize = 8000;
 pub const SHOT_MODES: [&str; 3] = ["select", "full", "snip"];
 pub const HOTKEY_NAMES: [&str; 4] = ["selection", "screenshot", "free", "retry"];
@@ -71,6 +74,8 @@ pub struct Config {
     pub autostart: bool,
     /// Game-overlay mode: answers appear in a small click-through window that never takes focus.
     pub overlay_mode: bool,
+    /// Text size of the game-overlay window in px (one of OVERLAY_FONTS); None = 16.
+    pub overlay_font: Option<u32>,
     /// Screenshot hotkey grabs the whole monitor at once instead of opening the Windows snipping tool.
     pub full_screenshot: bool,
     /// Screenshot hotkey: "select" (own area picker), "full" (whole monitor) or "snip" (Windows snipping tool).
@@ -101,6 +106,12 @@ impl Config {
     }
     pub fn opacity(&self) -> f32 {
         self.opacity.filter(|o| o.is_finite()).map(|o| o.clamp(MIN_OPACITY, 1.0)).unwrap_or(1.0)
+    }
+    pub fn overlay_font(&self) -> u32 {
+        self.overlay_font.filter(|f| OVERLAY_FONTS.contains(f)).unwrap_or(DEFAULT_OVERLAY_FONT)
+    }
+    pub fn overlay_font_index(&self) -> usize {
+        OVERLAY_FONTS.iter().position(|&f| f == self.overlay_font()).unwrap_or(2)
     }
     pub fn dark(&self) -> bool {
         self.theme != "light"
