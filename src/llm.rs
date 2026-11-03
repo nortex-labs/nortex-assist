@@ -82,6 +82,12 @@ const ENGLISH_NOTE: &str = "
 
 Language rule (overrides any earlier language instruction): always write the answer in English, even if the question or the text in an image is in another language.";
 
+/// Russian interface: answer in the language of the question, Russian when that is unclear
+/// (for example "56+23*6", a formula, code or a single word that could be anything).
+const RUSSIAN_NOTE: &str = "
+
+Language rule (overrides any earlier language instruction): write the answer in the language of the user's question. If the user asks for a particular language, use that one. If the language of the question cannot be determined (numbers, formulas, code, a lone symbol or name), answer in Russian. The language of these instructions does not matter: never answer in English just because they are in English.";
+
 /// The user's own prompt wins everywhere (overlay too); otherwise the overlay keeps its short one.
 fn system_prompt(cfg: &Config, simple: bool) -> String {
     let custom = cfg.prompt.trim();
@@ -92,14 +98,16 @@ fn system_prompt(cfg: &Config, simple: bool) -> String {
     } else {
         PROMPT
     };
-    let lang = if crate::i18n::is_en() { ENGLISH_NOTE } else { "" };
+    let lang = if crate::i18n::is_en() { ENGLISH_NOTE } else { RUSSIAN_NOTE };
     if simple {
         return format!("{base}{lang}");
     }
-    let mut p = format!("{base}{FORMAT_NOTE}{lang}");
+    let mut p = format!("{base}{FORMAT_NOTE}");
     if cfg.two_level_on() {
         p.push_str(TWO_LEVEL_NOTE);
     }
+    // last, so that nothing before it can override the language
+    p.push_str(lang);
     p
 }
 
@@ -293,11 +301,18 @@ pub fn ask(cfg: &Config, req: &Request, on_chunk: &dyn Fn(&str), cancel: &dyn Fn
         started.set(true);
         on_chunk(t);
     };
+    let mut cap: Option<u32> = None;
     for attempt in 1.. {
-        let res = if groq { groq_once(cfg, &req, &cb, cancel) } else { gemini_once(cfg, &req, &cb, cancel) };
+        let res = if groq { groq_once(cfg, &req, cap, &cb, cancel) } else { gemini_once(cfg, &req, &cb, cancel) };
         match res {
             Ok(a) => return Ok(a),
             Err(e) => {
+                // Groq counts the requested output size against a per-minute limit of the account:
+                // when it says "request too large", ask again for a smaller answer
+                if groq && cap.is_none() && !started.get() && !cancel() && re_is(r"(?i)request too large|reduce max_tokens", &e) {
+                    cap = Some(900);
+                    continue;
+                }
                 let retryable = if groq {
                     re_is(r"429|rate[_ ]limit|502|503|504|overload|temporarily unavailable", &e)
                 } else {
@@ -435,7 +450,8 @@ fn gemini_once(cfg: &Config, r: &Request, on_chunk: &dyn Fn(&str), cancel: &dyn 
     Ok(out)
 }
 
-fn groq_once(cfg: &Config, r: &Request, on_chunk: &dyn Fn(&str), cancel: &dyn Fn() -> bool) -> Result<String, String> {
+/// `cap`: a smaller output limit, used after Groq refused the usual one for its per-minute token limit.
+fn groq_once(cfg: &Config, r: &Request, cap: Option<u32>, on_chunk: &dyn Fn(&str), cancel: &dyn Fn() -> bool) -> Result<String, String> {
     if cfg.groq_key.is_empty() {
         return Err(crate::i18n::tr("API-ключ Groq не задан. Открой настройки."));
     }
@@ -468,7 +484,7 @@ fn groq_once(cfg: &Config, r: &Request, on_chunk: &dyn Fn(&str), cancel: &dyn Fn
         "model": GROQ_MODEL,
         "messages": messages,
         "stream": true,
-        "max_completion_tokens": if simple { 512 } else if deliberate { 4096 } else { 2048 },
+        "max_completion_tokens": cap.unwrap_or(if simple { 512 } else if deliberate { 4096 } else { 2048 }),
         "temperature": if deliberate { 1.0 } else { 0.7 },
         "top_p": if deliberate { 0.95 } else { 0.80 },
         "reasoning_effort": if deliberate { "high" } else { "none" },

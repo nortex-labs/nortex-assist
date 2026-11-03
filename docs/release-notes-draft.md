@@ -1,6 +1,6 @@
-<!-- Описание версии 1.4.0 (черновик, ещё не опубликовано). Правила: docs/RELEASE_NOTES_TEMPLATE.md. -->
+<!-- Описание версии 1.3.1 (готово к публикации). Правила: docs/RELEASE_NOTES_TEMPLATE.md. -->
 
-## Nortex Assist 1.4.0 · 2026-11-03
+## Nortex Assist 1.3.1 · 2026-11-03
 
 Ответы стали короче и аккуратнее, программа научилась читать файлы и заговорила по-английски.
 
@@ -18,8 +18,11 @@
 - Кнопка «Копировать» копирует короткий ответ без служебных знаков.
 - Настройки стали компактнее и разложены по блокам: «Подключение», «Внешний вид», «Ответы», «Поведение», «Горячие клавиши», «Обновления».
 - Совсем короткие пояснения не прячутся за кнопкой «Подробнее».
+- Язык ответа: по умолчанию русский. Если вопрос задан на другом языке или вы просите ответить на конкретном, ответ придёт на нём.
 
 ### Исправлено
+- На запросы вроде «56+23*6» объяснение в «Подробнее» приходило на английском.
+- Groq иногда отвечал ошибкой «Request too large» из-за минутного лимита токенов: теперь программа сама просит ответ покороче и повторяет запрос.
 - Одинаковые имена файлов из разных папок при прикреплении теряли второй файл.
 - «Спросить заново» мог передать нейросети служебные пометки прошлого ответа.
 
@@ -32,13 +35,13 @@
 ---
 
 **Скачать**
-- Установщик (рекомендуется): [NortexAssist-Setup-1.4.0.exe](https://github.com/nortex-labs/nortex-assist/releases/download/v1.4.0/NortexAssist-Setup-1.4.0.exe)
-- Портативная версия: [nortex-assist.exe](https://github.com/nortex-labs/nortex-assist/releases/download/v1.4.0/nortex-assist.exe)
+- Установщик (рекомендуется): [NortexAssist-Setup-1.3.1.exe](https://github.com/nortex-labs/nortex-assist/releases/download/v1.3.1/NortexAssist-Setup-1.3.1.exe)
+- Портативная версия: [nortex-assist.exe](https://github.com/nortex-labs/nortex-assist/releases/download/v1.3.1/nortex-assist.exe)
 
 **Контрольные суммы SHA-256**
 ```
-99AED1A8223FE627D04B61E8641640AF14F52ADE2CBCDC74609B10CC8A30D56E  NortexAssist-Setup-1.4.0.exe
-5640826CC1E57308F8B278201D1A7AF4258965BA97428183A42A32EB883E0BD9  nortex-assist.exe
+F1A780F572FEE08D90DCD5A34B59E1E366B55C87B8E30DC4476D5AABCFE0BE95  NortexAssist-Setup-1.3.1.exe
+5204CAD3BE9357D929164E3FE01155C8D0C6885EE41FBA04A9328A67A9D81299  nortex-assist.exe
 ```
 
-Полный список изменений: [сравнение с прошлой версией](https://github.com/nortex-labs/nortex-assist/compare/v1.3.0...v1.4.0)
+Полный список изменений: [сравнение с прошлой версией](https://github.com/nortex-labs/nortex-assist/compare/v1.3.0...v1.3.1)
