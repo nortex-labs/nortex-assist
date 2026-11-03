@@ -267,3 +267,47 @@ pub fn open_url(url: &str) {
     use std::os::windows::process::CommandExt;
     let _ = std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", url]).creation_flags(0x0800_0000).spawn();
 }
+
+/// The system "open" dialog for files (several can be picked) or for a folder. Blocks until it is
+/// closed, so call it from a helper thread. `owner` keeps the dialog on top of our window.
+pub fn pick_paths(folder: bool, owner: isize) -> Vec<std::path::PathBuf> {
+    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED};
+    use windows::Win32::UI::Shell::{FileOpenDialog, IFileOpenDialog, FOS_ALLOWMULTISELECT, FOS_FORCEFILESYSTEM, FOS_PICKFOLDERS, SIGDN_FILESYSPATH};
+    let mut out = Vec::new();
+    unsafe {
+        let inited = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+        let mut run = || -> windows::core::Result<()> {
+            let dlg: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
+            let mut opts = dlg.GetOptions()? | FOS_ALLOWMULTISELECT | FOS_FORCEFILESYSTEM;
+            if folder {
+                opts |= FOS_PICKFOLDERS;
+            }
+            dlg.SetOptions(opts)?;
+            dlg.SetTitle(if folder { w!("Выберите папку с файлами") } else { w!("Выберите файлы") })?;
+            dlg.Show(Some(hwnd(owner)))?; // Err when the user cancels
+            let items = dlg.GetResults()?;
+            for i in 0..items.GetCount()? {
+                let name = items.GetItemAt(i)?.GetDisplayName(SIGDN_FILESYSPATH)?;
+                out.push(std::path::PathBuf::from(name.to_string()?));
+                CoTaskMemFree(Some(name.0 as *const c_void));
+            }
+            Ok(())
+        };
+        let _ = run();
+        if inited {
+            CoUninitialize();
+        }
+    }
+    out
+}
+
+/// Runs a cmd.exe script that outlives this process (hidden window); used to finish uninstalling.
+pub fn run_detached(script: &str) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    let _ = std::process::Command::new("cmd")
+        .raw_arg(format!("/d /s /c \"{script}\""))
+        .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
+        .spawn();
+}

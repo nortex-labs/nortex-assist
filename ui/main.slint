@@ -2,6 +2,9 @@ import { ComboBox, ScrollView, ListView, TextEdit, Palette } from "std-widgets.s
 
 export struct ThumbItem { img: image }
 export struct HistItem { title: string, sub: string }
+// one piece of an answer: kind 0 paragraph, 1 heading, 2 bullet, 3 numbered, 4 quote, 5 code, 6 formula
+export struct BlockItem { kind: int, text: string, rich: styled-text, label: string }
+export struct FileItem { name: string, info: string, folder: bool }
 
 export global Theme {
     in property <bool> dark: true;
@@ -721,6 +724,217 @@ component AccentPicker inherits VerticalLayout {
 }
 
 // "Думаю" with three softly pulsing dots, shown until the first words of the answer arrive.
+// "Copy" chip of a code block: says "Скопировано" for a moment after the click.
+component CopyChip inherits Rectangle {
+    callback clicked();
+    property <bool> done: false;
+    width: chip-row.preferred-width + 14px;
+    height: 24px;
+    border-radius: 7px;
+    background: cta.pressed ? Theme.line-strong : cta.has-hover ? Theme.line : transparent;
+    animate background { duration: 140ms; }
+    Timer { interval: 1500ms; running: root.done; triggered => { root.done = false; } }
+    chip-row := HorizontalLayout {
+        padding-left: 7px;
+        padding-right: 8px;
+        spacing: 5px;
+        Image {
+            source: root.done ? @image-url("icons/check.svg") : @image-url("icons/copy.svg");
+            width: 12px;
+            height: 12px;
+            y: (parent.height - self.height) / 2;
+            colorize: root.done ? Theme.accent-text : cta.has-hover ? Theme.fg : Theme.muted;
+        }
+        Text {
+            text: root.done ? "Скопировано" : "Копировать код";
+            color: root.done ? Theme.accent-text : cta.has-hover ? Theme.fg : Theme.muted;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+    }
+    cta := TipArea {
+        tip: "Скопировать только этот код";
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.done = true; root.clicked(); }
+    }
+}
+
+// One piece of an answer drawn according to its kind.
+component AnswerBlock inherits VerticalLayout {
+    in property <BlockItem> b;
+    in property <float> scale: 1.0;
+    in property <bool> first: false;
+    callback copy-code(string);
+    padding-top: root.b.kind == 1 && !root.first ? 8px : 0px;
+
+    if root.b.kind == 0: StyledText {
+        text: root.b.rich;
+        default-color: Theme.fg;
+        default-font-size: 14px * root.scale;
+    }
+    if root.b.kind == 1: HorizontalLayout {
+        spacing: 9px;
+        Rectangle { width: 3px; border-radius: 2px; background: Theme.accent; }
+        Text {
+            text: root.b.text;
+            wrap: TextWrap.word-wrap;
+            color: Theme.fg;
+            font-weight: 700;
+            font-size: (root.b.label == "1" ? 19px : root.b.label == "2" ? 17px : 15px) * root.scale;
+        }
+    }
+    if root.b.kind == 2: HorizontalLayout {
+        spacing: 6px;
+        padding-left: 4px;
+        Rectangle {
+            width: 12px;
+            Rectangle {
+                x: 3px;
+                y: 8px * root.scale;
+                width: 6px;
+                height: 6px;
+                border-radius: 3px;
+                background: Theme.accent;
+            }
+        }
+        StyledText {
+            text: root.b.rich;
+            default-color: Theme.fg;
+            default-font-size: 14px * root.scale;
+        }
+    }
+    if root.b.kind == 3: HorizontalLayout {
+        spacing: 4px;
+        padding-left: 4px;
+        Text {
+            text: root.b.label;
+            width: 22px * root.scale;
+            color: Theme.accent-text;
+            font-weight: 700;
+            font-size: 14px * root.scale;
+            horizontal-alignment: left;
+            vertical-alignment: top;
+        }
+        StyledText {
+            text: root.b.rich;
+            default-color: Theme.fg;
+            default-font-size: 14px * root.scale;
+        }
+    }
+    if root.b.kind == 4: HorizontalLayout {
+        spacing: 10px;
+        padding-left: 2px;
+        Rectangle { width: 3px; border-radius: 2px; background: Theme.line-strong; }
+        StyledText {
+            text: root.b.rich;
+            default-color: Theme.muted;
+            default-font-size: 14px * root.scale;
+        }
+    }
+    if root.b.kind == 5: Rectangle {
+        background: Theme.field;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Theme.line;
+        VerticalLayout {
+            padding-bottom: 8px;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 6px;
+                padding-top: 6px;
+                CopyChip { clicked => { root.copy-code(root.b.text); } }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: root.b.label == "" ? "код" : root.b.label;
+                    color: Theme.subtle;
+                    font-size: 11px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    horizontal-alignment: right;
+                }
+            }
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 2px;
+                TextInput {
+                    text: root.b.text;
+                    read-only: true;
+                    single-line: false;
+                    wrap: TextWrap.word-wrap;
+                    color: Theme.fg;
+                    font-family: "Consolas";
+                    font-size: 13px * root.scale;
+                    selection-background-color: Theme.accent.with-alpha(0.35);
+                    selection-foreground-color: Theme.fg;
+                }
+            }
+        }
+    }
+    if root.b.kind == 6: Rectangle {
+        background: Theme.accent-soft;
+        border-radius: 10px;
+        HorizontalLayout {
+            padding: 10px;
+            padding-left: 14px;
+            padding-right: 14px;
+            Text {
+                text: root.b.text;
+                wrap: TextWrap.word-wrap;
+                color: Theme.fg;
+                font-family: "Cambria Math";
+                font-size: 18px * root.scale;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}
+
+// Pill under the short answer: opens and closes the detailed part.
+component MoreToggle inherits Rectangle {
+    in property <bool> expanded;
+    callback clicked();
+    height: 30px;
+    HorizontalLayout {
+        alignment: start;
+        Rectangle {
+            width: 128px;
+            border-radius: 15px;
+            border-width: 1px;
+            border-color: mta.has-hover ? Theme.accent : Theme.accent.with-alpha(0.45);
+            background: mta.pressed ? Theme.accent.with-alpha(0.25) : mta.has-hover ? Theme.accent-soft : transparent;
+            animate background, border-color { duration: 140ms; }
+            HorizontalLayout {
+                alignment: center;
+                spacing: 7px;
+                padding-left: 10px;
+                padding-right: 10px;
+                Text {
+                    text: root.expanded ? "Свернуть" : "Подробнее";
+                    color: Theme.accent-text;
+                    font-size: 12px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                Image {
+                    source: @image-url("icons/chevron.svg");
+                    width: 12px;
+                    height: 12px;
+                    y: (parent.height - self.height) / 2;
+                    colorize: Theme.accent-text;
+                    transform-rotation: root.expanded ? 180deg : 0deg;
+                    animate transform-rotation { duration: 200ms; easing: ease-out; }
+                }
+            }
+            mta := TipArea {
+                tip: root.expanded ? "Оставить только короткий ответ" : "Показать полное объяснение";
+                mouse-cursor: MouseCursor.pointer;
+                clicked => { root.clicked(); }
+            }
+        }
+    }
+}
+
 component Thinking inherits HorizontalLayout {
     in property <length> size: 14px;
     in property <color> color: Theme.fg;
@@ -798,6 +1012,20 @@ export component MainWindow inherits Window {
     in property <string> composer-placeholder;
     in-out property <string> composer-text;
     in property <[ThumbItem]> thumbs;
+    // files and folders attached with the paperclip
+    in property <[FileItem]> files;
+
+    // answer layout: blocks of the short part (and of the details when opened)
+    in property <[BlockItem]> blocks;
+    in property <bool> has-more: false;
+    in property <bool> select-mode: false;
+    in property <string> select-text;
+    in property <bool> uninstall-open: false;
+    in property <int> uninstall-left: 0;
+    in property <bool> expanded: false;
+    in property <float> text-scale: 1.0;
+    in property <[int]> text-scales: [85, 100, 115, 130, 150, 175];
+    in-out property <int> text-scale-index: 1;
 
     // history
     in property <bool> history-open;
@@ -816,6 +1044,7 @@ export component MainWindow inherits Window {
     in-out property <bool> autostart;
     in-out property <bool> history-enabled;
     in-out property <bool> overlay-mode;
+    in-out property <bool> two-level: true;
     in property <[int]> overlay-fonts: [12, 14, 16, 18, 20, 24, 28, 32];
     in-out property <int> overlay-font-index: 2;
     in-out property <bool> show-tray: true;
@@ -856,6 +1085,15 @@ export component MainWindow inherits Window {
     callback check-key();
     callback prompt-preset(int);
     callback copy();
+    callback toggle-more();
+    callback toggle-select();
+    callback copy-code(string);
+    callback uninstall-ask();
+    callback uninstall-cancel();
+    callback uninstall-confirm();
+    callback text-scale-changed(int);
+    callback attach-pick(bool);
+    callback remove-file(int);
     callback toggle-history();
     callback clear-history();
     callback toggle-settings();
@@ -947,9 +1185,15 @@ export component MainWindow inherits Window {
                         if !root.busy && root.answer-tools && !root.panel-open: IconButton { icon: @image-url("icons/retry.svg"); tip: "Спросить заново (Alt+S).\nЕсли ответ уже пришёл, модель посчитает его\nневерным и попробует ответить по-другому"; enabled: root.retry-enabled; clicked => { root.retry(); } }
                         if !root.busy && root.answer-tools && !root.panel-open: IconButton {
                             icon: root.copy-done ? @image-url("icons/check.svg") : @image-url("icons/copy.svg");
-                            tip: "Скопировать весь ответ.\nЧасть ответа можно выделить мышью и нажать Ctrl+C";
+                            tip: "Скопировать короткий ответ без оформления";
                             active: root.copy-done;
                             clicked => { root.copy(); }
+                        }
+                        if !root.busy && root.answer-tools && !root.panel-open: IconButton {
+                            icon: @image-url("icons/select.svg");
+                            tip: root.select-mode ? "Вернуть оформление" : "Выделить текст: ответ станет простым текстом,\nкоторый можно выделить мышью и скопировать по частям";
+                            active: root.select-mode;
+                            clicked => { root.toggle-select(); }
                         }
                         Rectangle { horizontal-stretch: 1; }
                         IconButton { icon: @image-url("icons/history.svg"); tip: "История: прошлые вопросы и ответы.\nОтвет из истории можно уточнить"; active: root.history-open; clicked => { root.toggle-history(); } }
@@ -1062,26 +1306,46 @@ export component MainWindow inherits Window {
                                 font-size: 12px;
                             }
                             if root.thinking: Thinking { }
-                            // read-only input: the answer can be selected with the mouse and copied in part
-                            if !root.thinking: FocusScope {
-                                capture-key-pressed(e) => {
-                                    if (e.modifiers.control && !e.modifiers.alt) {
-                                        if (e.text == "с" || e.text == "С") { body.copy(); return accept; }
-                                        if (e.text == "ф" || e.text == "Ф") { body.select-all(); return accept; }
+                            if !root.thinking && root.select-mode: VerticalLayout {
+                                spacing: 9px;
+                                // plain text that can be selected with the mouse and copied part by part
+                                FocusScope {
+                                    capture-key-pressed(e) => {
+                                        if (e.modifiers.control && !e.modifiers.alt) {
+                                            if (e.text == "с" || e.text == "С") { sel.copy(); return accept; }
+                                            if (e.text == "ф" || e.text == "Ф") { sel.select-all(); return accept; }
+                                        }
+                                        return reject;
                                     }
-                                    return reject;
+                                    VerticalLayout {
+                                        sel := TextInput {
+                                            text: root.select-text;
+                                            read-only: true;
+                                            single-line: false;
+                                            wrap: TextWrap.word-wrap;
+                                            color: Theme.fg;
+                                            font-size: 14px * root.text-scale;
+                                            selection-background-color: Theme.accent.with-alpha(0.35);
+                                            selection-foreground-color: Theme.fg;
+                                        }
+                                    }
                                 }
-                                VerticalLayout {
-                                    body := TextInput {
-                                        text: root.body-text;
-                                        read-only: true;
-                                        single-line: false;
-                                        wrap: TextWrap.word-wrap;
-                                        color: Theme.fg;
-                                        selection-background-color: Theme.accent.with-alpha(0.35);
-                                        selection-foreground-color: Theme.fg;
-                                        font-size: 14px;
-                                    }
+                                if root.has-more: MoreToggle {
+                                    expanded: root.expanded;
+                                    clicked => { root.toggle-more(); }
+                                }
+                            }
+                            if !root.thinking && !root.select-mode: VerticalLayout {
+                                spacing: 9px * root.text-scale;
+                                for b[i] in root.blocks: AnswerBlock {
+                                    b: b;
+                                    first: i == 0;
+                                    scale: root.text-scale;
+                                    copy-code(t) => { root.copy-code(t); }
+                                }
+                                if root.has-more: MoreToggle {
+                                    expanded: root.expanded;
+                                    clicked => { root.toggle-more(); }
                                 }
                             }
                             if root.hint-text != "": Text {
@@ -1160,7 +1424,7 @@ export component MainWindow inherits Window {
 
                             Card {
                                 index: "01";
-                                title: "Модель и подключение";
+                                title: "Подключение";
                                 Label { text: "Провайдер"; }
                                 ComboBox {
                                     model: ["Google Gemini", "Groq"];
@@ -1285,11 +1549,36 @@ export component MainWindow inherits Window {
                                     picked(c) => { root.custom-color-picked(c); }
                                     text-edited(t) => { root.custom-text-edited(t); }
                                 }
+                                Label { text: "Размер текста ответа"; }
+                                StepSlider {
+                                    steps: root.text-scales;
+                                    unit: " %";
+                                    index <=> root.text-scale-index;
+                                    changed(i) => { root.text-scale-changed(i); }
+                                }
+                                Check { label: "Поверх окон"; checked <=> root.overlay-mode; }
+                                Label {
+                                    text: "Короткий ответ в маленьком окне, которое не забирает фокус и пропускает клики. Работает над играми (в окне или без рамки), видео и лекциями.";
+                                    font-size: 10px;
+                                    wrap: TextWrap.word-wrap;
+                                }
+                                if root.overlay-mode: Label { text: "Размер текста в этом окне. Оно само подстраивается под ответ."; wrap: TextWrap.word-wrap; }
+                                if root.overlay-mode: StepSlider {
+                                    steps: root.overlay-fonts;
+                                    index <=> root.overlay-font-index;
+                                }
+                                if root.overlay-mode: HorizontalLayout {
+                                    alignment: start;
+                                    spacing: 10px;
+                                    Label { text: "Так будет выглядеть:"; vertical-alignment: center; }
+                                    OverlaySample { text: "B"; font: root.overlay-fonts[root.overlay-font-index] * 1px; }
+                                    OverlaySample { text: "Канберра"; font: root.overlay-fonts[root.overlay-font-index] * 1px; }
+                                }
                             }
 
                             Card {
                                 index: "03";
-                                title: "Стиль ответов";
+                                title: "Ответы";
                                 Label { text: "Заготовки"; }
                                 HorizontalLayout {
                                     spacing: 6px;
@@ -1311,7 +1600,7 @@ export component MainWindow inherits Window {
                                     }
                                     VerticalLayout {
                                         pe := TextEdit {
-                                            height: 150px;
+                                            height: 110px;
                                             font-size: 12px;
                                             wrap: TextWrap.word-wrap;
                                             text <=> root.prompt-text;
@@ -1321,13 +1610,19 @@ export component MainWindow inherits Window {
                                 HorizontalLayout {
                                     spacing: 8px;
                                     Label {
-                                        text: "Изменённый промпт действует и в режиме поверх игр.";
+                                        text: "Изменённый промпт действует и в режиме «Поверх окон».";
                                         font-size: 10px;
                                         wrap: TextWrap.word-wrap;
                                         horizontal-stretch: 1;
                                         vertical-alignment: center;
                                     }
                                     ActionButton { text: "Сбросить"; tip: "Вернуть встроенный промпт «Только ответ»"; clicked => { root.prompt-preset(0); } }
+                                }
+                                Check { label: "Короткий ответ, подробности по кнопке"; checked <=> root.two-level; }
+                                Label {
+                                    text: "Сначала короткий ответ, а объяснение раскрывается кнопкой «Подробнее». Выключите, чтобы получать ответ целиком.";
+                                    font-size: 10px;
+                                    wrap: TextWrap.word-wrap;
                                 }
                             }
 
@@ -1363,39 +1658,10 @@ export component MainWindow inherits Window {
                                     font-size: 10px;
                                     wrap: TextWrap.word-wrap;
                                 }
-                                Check { label: "Режим поверх игр"; checked <=> root.overlay-mode; }
-                                Label {
-                                    text: "Скриншот снимает весь экран и сразу показывает короткий ответ в окне, которое не забирает фокус и пропускает клики. Работает в оконном и безрамочном режиме игры.";
-                                    font-size: 10px;
-                                    wrap: TextWrap.word-wrap;
-                                }
-                                if root.overlay-mode: Label { text: "Размер текста в окне поверх игр. Окно само подстраивается под длину ответа и открывается там, где верхний левый угол окна чата."; wrap: TextWrap.word-wrap; }
-                                if root.overlay-mode: StepSlider {
-                                    steps: root.overlay-fonts;
-                                    index <=> root.overlay-font-index;
-                                }
-                                if root.overlay-mode: HorizontalLayout {
-                                    alignment: start;
-                                    spacing: 10px;
-                                    Label { text: "Так будет выглядеть:"; vertical-alignment: center; }
-                                    OverlaySample { text: "B"; font: root.overlay-fonts[root.overlay-font-index] * 1px; }
-                                    OverlaySample { text: "Канберра"; font: root.overlay-fonts[root.overlay-font-index] * 1px; }
-                                }
                             }
 
                             Card {
                                 index: "05";
-                                title: "Обновления";
-                                HorizontalLayout {
-                                    spacing: 8px;
-                                    Check { label: "Проверять обновления автоматически"; checked <=> root.auto-update; horizontal-stretch: 1; }
-                                    LinkText { text: "Проверить сейчас"; vertical-alignment: center; tip: "Спросить у GitHub, есть ли новая версия"; clicked => { root.check-updates(); } }
-                                }
-                                if root.update-status != "": Label { text: root.update-status; wrap: TextWrap.word-wrap; }
-                            }
-
-                            Card {
-                                index: "06";
                                 title: "Горячие клавиши";
                                 for label[i] in root.hotkey-labels: HorizontalLayout {
                                     spacing: 8px;
@@ -1411,14 +1677,31 @@ export component MainWindow inherits Window {
                                     ActionButton { text: "По умолчанию"; tip: "Вернуть Alt+Q, Alt+W, Alt+E, Alt+S"; clicked => { root.reset-hotkeys(); } }
                                 }
                             }
+
+                            Card {
+                                index: "06";
+                                title: "Обновления";
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Check { label: "Проверять обновления автоматически"; checked <=> root.auto-update; horizontal-stretch: 1; }
+                                    LinkText { text: "Проверить сейчас"; vertical-alignment: center; tip: "Спросить у GitHub, есть ли новая версия"; clicked => { root.check-updates(); } }
+                                }
+                                if root.update-status != "": Label { text: root.update-status; wrap: TextWrap.word-wrap; }
+                            }
                         }
                     }
                     Rectangle {
                         height: 52px;
                         HorizontalLayout {
                             padding: 10px;
-                            padding-left: 16px;
+                            padding-left: 12px;
                             spacing: 8px;
+                            IconButton {
+                                y: 1px;
+                                icon: @image-url("icons/trash.svg");
+                                tip: "Удалить программу.\nПопросит подтвердить, кнопка включится через 5 секунд";
+                                clicked => { root.uninstall-ask(); }
+                            }
                             Text {
                                 text: root.saved-text;
                                 color: Theme.muted;
@@ -1437,7 +1720,7 @@ export component MainWindow inherits Window {
                 Rectangle {
                     property <bool> shown: root.composer-on && !root.panel-open && !root.overlay-view;
                     visible: shown;
-                    height: shown ? (root.thumbs.length > 0 ? 134px : 58px) : 0px;
+                    height: shown ? 58px + (root.thumbs.length > 0 ? 76px : 0px) + (root.files.length > 0 ? 36px : 0px) : 0px;
                     animate height { duration: 180ms; easing: ease-out; }
                     clip: true;
                     VerticalLayout {
@@ -1487,6 +1770,43 @@ export component MainWindow inherits Window {
                                 }
                             }
                         }
+                        if root.files.length > 0: HorizontalLayout {
+                            spacing: 6px;
+                            alignment: start;
+                            height: 28px;
+                            for f[i] in root.files: Rectangle {
+                                width: min(fchip.preferred-width + 8px, 190px);
+                                height: 28px;
+                                border-radius: 8px;
+                                background: Theme.accent-soft;
+                                fchip := HorizontalLayout {
+                                    padding-left: 8px;
+                                    padding-right: 6px;
+                                    spacing: 6px;
+                                    Image {
+                                        source: f.folder ? @image-url("icons/folder.svg") : @image-url("icons/file.svg");
+                                        width: 13px;
+                                        height: 13px;
+                                        y: (parent.height - self.height) / 2;
+                                        colorize: Theme.accent-text;
+                                    }
+                                    Text { text: f.name; color: Theme.fg; font-size: 11px; vertical-alignment: center; overflow: TextOverflow.elide; }
+                                    if f.info != "": Text { text: f.info; color: Theme.muted; font-size: 10px; vertical-alignment: center; }
+                                    Image {
+                                        source: @image-url("icons/close.svg");
+                                        width: 11px;
+                                        height: 11px;
+                                        y: (parent.height - self.height) / 2;
+                                        colorize: fca.has-hover ? Theme.fg : Theme.muted;
+                                    }
+                                }
+                                fca := TipArea {
+                                    tip: "Убрать из вопроса";
+                                    mouse-cursor: MouseCursor.pointer;
+                                    clicked => { root.remove-file(i); }
+                                }
+                            }
+                        }
                         Rectangle {
                             height: 44px;
                             background: Theme.field;
@@ -1495,11 +1815,31 @@ export component MainWindow inherits Window {
                             border-color: inp.has-focus ? Theme.accent : Theme.line;
                             animate border-color { duration: 160ms; }
                             HorizontalLayout {
-                                padding-left: 12px;
+                                padding-left: 7px;
                                 padding-right: 7px;
                                 padding-top: 7px;
                                 padding-bottom: 7px;
-                                spacing: 8px;
+                                spacing: 6px;
+                                Rectangle {
+                                    width: 30px;
+                                    border-radius: 9px;
+                                    background: cla.pressed ? Theme.line-strong : cla.has-hover ? Theme.line : transparent;
+                                    animate background { duration: 140ms; }
+                                    Image {
+                                        source: @image-url("icons/clip.svg");
+                                        width: 16px;
+                                        height: 16px;
+                                        x: (parent.width - self.width) / 2;
+                                        y: (parent.height - self.height) / 2;
+                                        colorize: cla.has-hover ? Theme.accent-text : Theme.muted;
+                                        animate colorize { duration: 140ms; }
+                                    }
+                                    cla := TipArea {
+                                        tip: "Прикрепить файлы.\nТекст из них попадёт в вопрос";
+                                        mouse-cursor: MouseCursor.pointer;
+                                        clicked => { root.attach-pick(false); }
+                                    }
+                                }
                                 Rectangle {
                                     horizontal-stretch: 1;
                                     FocusScope {
@@ -1609,6 +1949,61 @@ export component MainWindow inherits Window {
                     }
                     moved => {
                         if (self.pressed) { root.resize-move(); }
+                    }
+                }
+            }
+
+            // uninstall confirmation: the red button wakes up after five seconds
+            if root.uninstall-open && !root.overlay-view: Rectangle {
+                background: #000000b8;
+                TouchArea { }
+                Rectangle {
+                    width: min(parent.width - 40px, 360px);
+                    height: ucol.preferred-height;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    background: Theme.raised;
+                    border-radius: 14px;
+                    border-width: 1px;
+                    border-color: Theme.line-strong;
+                    ucol := VerticalLayout {
+                        padding: 18px;
+                        spacing: 10px;
+                        Text { text: "Удалить Nortex Assist?"; color: Theme.fg; font-size: 16px; font-weight: 700; }
+                        Text {
+                            text: "Программа, её настройки, ключи API и история будут удалены с этого компьютера. Отменить это нельзя.";
+                            color: Theme.muted;
+                            font-size: 12px;
+                            wrap: TextWrap.word-wrap;
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            padding-top: 6px;
+                            alignment: end;
+                            ActionButton { text: "Отмена"; primary: true; clicked => { root.uninstall-cancel(); } }
+                            Rectangle {
+                                height: 30px;
+                                min-width: 110px;
+                                border-radius: 8px;
+                                border-width: 1px;
+                                border-color: Theme.danger;
+                                background: root.uninstall-left == 0 ? (uda.pressed ? Theme.danger.darker(0.2) : uda.has-hover ? Theme.danger.brighter(0.1) : Theme.danger) : transparent;
+                                animate background { duration: 140ms; }
+                                Text {
+                                    text: root.uninstall-left > 0 ? "Удалить (" + root.uninstall-left + ")" : "Удалить";
+                                    color: root.uninstall-left == 0 ? #1c0d0c : Theme.danger.with-alpha(0.7);
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                                uda := TouchArea {
+                                    enabled: root.uninstall-left == 0;
+                                    mouse-cursor: root.uninstall-left == 0 ? MouseCursor.pointer : MouseCursor.default;
+                                    clicked => { root.uninstall-confirm(); }
+                                }
+                            }
+                        }
                     }
                 }
             }

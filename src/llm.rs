@@ -57,16 +57,44 @@ pub const DEFAULT_PROMPT: &str = PROMPT;
 /// Ready-made answer styles offered in the settings: only the answer, answer + short reason, detailed.
 pub const PRESETS: [&str; 3] = [PROMPT, EXPLAIN_PROMPT, DETAILED_PROMPT];
 
+/// How answers are written so that the window can draw them nicely (headings, lists, code, formulas).
+/// Added after every style, the built-in ones and the user's own, but never in the compact overlay.
+const FORMAT_NOTE: &str = "
+
+Formatting rules (they override any earlier instruction about plain text or Markdown):
+- Light Markdown is allowed and is drawn by the app. Use it only when it helps readability; a one-line answer stays plain.
+- Put every piece of code in a fenced block with the language, for example ```python.
+- Write mathematical formulas in LaTeX: $x^2+1$ inline, or $$ ... $$ on its own lines for a displayed formula. Never use backslash-parenthesis or backslash-bracket delimiters.
+- Use - for bullet lists, 1. 2. 3. for steps, ## for section headings in long answers, **bold** for key terms and final results.
+- No tables, no images, no HTML.";
+
+/// Two-level answers: a short one first, the details behind the "more" button of the app.
+const TWO_LEVEL_NOTE: &str = "
+
+Answer in two levels:
+- First write the short answer exactly as the style above asks (the direct answer, as brief as possible).
+- Then, if there is something worth explaining (reasoning, solution steps, why other options are wrong, how the code works), write one line that contains only <<<MORE>>> and after it the detailed explanation. The user opens it by pressing a button.
+- If the short answer already says everything (a fact, a translation, a one-word reply), do not write <<<MORE>>> at all.
+- Never mention these levels or the marker in the text.";
+
 /// The user's own prompt wins everywhere (overlay too); otherwise the overlay keeps its short one.
-fn system_prompt(cfg: &Config, simple: bool) -> &str {
+fn system_prompt(cfg: &Config, simple: bool) -> String {
     let custom = cfg.prompt.trim();
-    if !custom.is_empty() {
+    let base = if !custom.is_empty() {
         custom
     } else if simple {
         SHORT_PROMPT
     } else {
         PROMPT
+    };
+    if simple {
+        return base.to_string();
     }
+    let mut p = format!("{base}{FORMAT_NOTE}");
+    if cfg.two_level_on() {
+        p.push_str(TWO_LEVEL_NOTE);
+    }
+    p
 }
 
 const REJECT_NOTE: &str = "Your previous answer was wrong or not good enough. Reconsider the task carefully and answer again. Do not repeat the same answer unless you have checked that it is correct.";
@@ -81,11 +109,19 @@ pub struct Turn {
     pub text: String,
 }
 
+/// A text file attached with the paperclip: shown to the model as part of the question.
+#[derive(Clone, Debug, Default)]
+pub struct Attachment {
+    pub name: String,
+    pub text: String,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Request {
     pub text: String,
     pub extra: String,
     pub images: Vec<String>,
+    pub files: Vec<Attachment>,
     pub history: Vec<Turn>,
     pub rejected: Vec<String>,
 }
@@ -104,17 +140,34 @@ fn take_chars(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }
 
+pub const MAX_FILES: usize = 60;
+pub const MAX_FILE_CHARS: usize = 60_000;
+
+/// The attached files as one block of text in front of the question.
+fn files_block(r: &Request) -> String {
+    let mut out = String::new();
+    for f in &r.files {
+        out.push_str(&format!("=== File: {} ===
+{}
+=== End of file ===
+
+", f.name, f.text.trim_end()));
+    }
+    out
+}
+
 /// Everything the UI hands over is bounded: sizes, counts.
 pub fn sanitize(r: &Request) -> Result<Request, String> {
     let skip = |len: usize, keep: usize| len.saturating_sub(keep);
     let out = Request {
         text: take_chars(&r.text, 30000),
         extra: take_chars(&r.extra, 4000),
+        files: r.files.iter().take(MAX_FILES).map(|f| Attachment { name: take_chars(&f.name, 200), text: take_chars(&f.text, MAX_FILE_CHARS) }).collect(),
         images: r.images.iter().take(4).filter(|i| !i.is_empty() && i.len() <= 40_000_000).cloned().collect(),
         history: r.history.iter().skip(skip(r.history.len(), 40)).map(|t| Turn { model: t.model, text: take_chars(&t.text, 12000) }).collect(),
         rejected: r.rejected.iter().skip(skip(r.rejected.len(), 3)).map(|t| take_chars(t, 12000)).collect(),
     };
-    if out.text.trim().is_empty() && out.images.is_empty() {
+    if out.text.trim().is_empty() && out.images.is_empty() && out.files.is_empty() && out.extra.trim().is_empty() {
         return Err("Пустой запрос".into());
     }
     Ok(out)
@@ -142,8 +195,14 @@ fn mime_of(b64: &str) -> &'static str {
 }
 
 fn image_question(r: &Request) -> String {
+    let files = files_block(r);
     if r.images.is_empty() {
-        return if r.extra.is_empty() { r.text.clone() } else { format!("{}\n\nAdditional instruction: {}", r.text, r.extra) };
+        let q = if r.extra.is_empty() { r.text.clone() } else { format!("{}
+
+Additional instruction: {}", r.text, r.extra) };
+        return if files.is_empty() { q } else { format!("The user attached these files:
+
+{files}{q}") };
     }
     let mut q = if r.images.len() == 1 {
         "Solve the problem shown in the image.".to_string()
@@ -151,10 +210,13 @@ fn image_question(r: &Request) -> String {
         format!("Solve the problem shown in the {} images (parts of one task, in order).", r.images.len())
     };
     if !r.extra.is_empty() {
-        q.push_str("\nAdditional instruction: ");
+        q.push_str("
+Additional instruction: ");
         q.push_str(&r.extra);
     }
-    q
+    if files.is_empty() { q } else { format!("The user attached these files:
+
+{files}{q}") }
 }
 
 fn re_is(pattern: &str, s: &str) -> bool {

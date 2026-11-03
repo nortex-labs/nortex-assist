@@ -1,11 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod attach;
 mod clip;
 mod config;
 mod crypto;
 mod history;
 mod llm;
 mod logging;
+mod md;
 mod native;
 mod update;
 
@@ -34,7 +36,7 @@ slint::include_modules!();
 const MAX_ANSWERS: usize = 5;
 const MAX_SHOTS: usize = 4;
 const NORMAL_SIZE: (f32, f32) = (540.0, 680.0);
-const SETTINGS_SIZE: (f32, f32) = (720.0, 600.0);
+const SETTINGS_SIZE: (f32, f32) = (600.0, 560.0);
 const BLUR_GRACE: Duration = Duration::from_millis(400);
 const OVERLAY_TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -93,6 +95,18 @@ struct App {
     chat: Vec<Turn>,
     composer: Option<Composer>,
     pending: Vec<(String, Image)>,
+    /// text files and folders attached with the paperclip: (chip label, is a folder, files)
+    attached: Vec<(String, bool, Vec<llm::Attachment>)>,
+    /// the file dialog is open: the window must not hide because it lost focus
+    dialog_open: Arc<std::sync::atomic::AtomicBool>,
+    /// the detailed part of the current answer is unfolded
+    expanded: bool,
+    /// the answer is shown as plain selectable text instead of formatted blocks
+    select_mode: bool,
+    uninstall_left: u32,
+    uninstall_timer: Timer,
+    /// the full text of the answer on screen (with the short/detail marker)
+    shown_text: String,
 
     visible: bool,
     overlay_view: bool,
@@ -151,6 +165,17 @@ fn record_turn(chat: &mut Vec<Turn>, q: &str, a: &str) {
         let extra = chat.len() - 20;
         chat.drain(..extra);
     }
+}
+
+/// "1 файл", "3 файла", "12 файлов"
+fn files_word(n: usize) -> String {
+    let word = match (n % 10, n % 100) {
+        (_, 11..=14) => "файлов",
+        (1, _) => "файл",
+        (2..=4, _) => "файла",
+        _ => "файлов",
+    };
+    format!("{n} {word}")
 }
 
 fn make_image(w: u32, h: u32, rgba: &[u8]) -> Image {
@@ -552,7 +577,12 @@ impl App {
             return;
         }
         let Some(h) = self.hwnd() else { return };
-        if !self.pinned && self.shown_at.elapsed() > BLUR_GRACE && native::foreground() != h {
+        if !self.pinned
+            && !self.dialog_open.load(Ordering::SeqCst)
+            && !self.ui().get_uninstall_open()
+            && self.shown_at.elapsed() > BLUR_GRACE
+            && native::foreground() != h
+        {
             self.hide_window();
             return;
         }
@@ -607,9 +637,232 @@ impl App {
         ui.set_question_text("".into());
         ui.set_hint_text("".into());
         ui.set_thinking(false);
-        ui.set_body_text(text.into());
+        self.show_plain(text);
         self.set_nav(false);
         self.fit_overlay();
+    }
+
+    /// A status line or a label: shown as it is, not read as Markdown.
+    fn show_plain(&mut self, text: &str) {
+        let ui = self.ui();
+        self.shown_text.clear();
+        ui.set_body_text(text.into());
+        ui.set_has_more(false);
+        let blocks = vec![BlockItem { kind: 0, text: text.into(), rich: slint::StyledText::from_plain_text(text), label: "".into() }];
+        ui.set_blocks(ModelRc::new(VecModel::from(blocks)));
+    }
+
+    /// An answer: short part first, details behind the button, Markdown drawn as blocks.
+    fn show_answer(&mut self, text: &str) {
+        self.shown_text = text.to_string();
+        let ui = self.ui();
+        ui.set_text_scale(self.cfg.text_scale() as f32 / 100.0);
+        let (short, detail) = md::split_levels(text);
+        // the compact window shows only the short part, without Markdown marks
+        ui.set_body_text(md::plain_inline(&short).into());
+        let accent = {
+            let c = ui.global::<Theme>().get_accent_text();
+            format!("#{:02x}{:02x}{:02x}", c.red(), c.green(), c.blue())
+        };
+        let mut shown = md::parse(&short);
+        if self.expanded {
+            if let Some(d) = &detail {
+                shown.extend(md::parse(d));
+            }
+        }
+        let items: Vec<BlockItem> = shown
+            .into_iter()
+            .map(|b| {
+                let plain = !matches!(b.kind, md::Kind::Code | md::Kind::Formula);
+                let rich = if plain {
+                    slint::StyledText::from_markdown(&md::inline_markdown(&b.text, &accent)).unwrap_or_else(|_| slint::StyledText::from_plain_text(&md::plain_inline(&b.text)))
+                } else {
+                    slint::StyledText::default()
+                };
+                let text = if b.kind == md::Kind::Heading { md::plain_inline(&b.text) } else { b.text };
+                BlockItem { kind: b.kind as i32, text: text.into(), rich, label: b.label.into() }
+            })
+            .collect();
+        ui.set_blocks(ModelRc::new(VecModel::from(items)));
+        ui.set_has_more(detail.is_some());
+        ui.set_expanded(self.expanded);
+        ui.set_select_mode(self.select_mode);
+        if self.select_mode {
+            ui.set_select_text(md::plain_visible(text, self.expanded).into());
+        }
+    }
+
+    fn toggle_select(&mut self) {
+        self.select_mode = !self.select_mode;
+        let t = self.shown_text.clone();
+        self.show_answer(&t);
+    }
+
+    fn copy_code(&mut self, text: &str) {
+        clip::set_text(text);
+    }
+
+    // ---------- uninstall ----------
+
+    /// Opens the confirmation: the "Удалить" button becomes available after five seconds.
+    fn uninstall_ask(&mut self) {
+        if !self.visible || self.overlay_view {
+            self.show_window();
+        }
+        self.uninstall_left = 5;
+        let ui = self.ui();
+        ui.set_uninstall_left(5);
+        ui.set_uninstall_open(true);
+        self.uninstall_timer.start(TimerMode::Repeated, Duration::from_secs(1), || {
+            with_app(|a| {
+                a.uninstall_left = a.uninstall_left.saturating_sub(1);
+                a.ui().set_uninstall_left(a.uninstall_left as i32);
+                if a.uninstall_left == 0 {
+                    a.uninstall_timer.stop();
+                }
+            })
+        });
+    }
+
+    fn uninstall_cancel(&mut self) {
+        self.uninstall_timer.stop();
+        self.uninstall_left = 0;
+        let ui = self.ui();
+        ui.set_uninstall_open(false);
+        ui.set_uninstall_left(0);
+    }
+
+    /// Removes the autostart entry and, after this process has quit, the program and its data.
+    fn uninstall_confirmed(&mut self) {
+        if self.uninstall_left != 0 || !self.ui().get_uninstall_open() {
+            return;
+        }
+        self.uninstall_now();
+    }
+
+    /// The actual removal, without any question (the temporary hotkey calls it directly).
+    fn uninstall_now(&mut self) {
+        let _ = native::set_autostart(false);
+        let exe = std::env::current_exe().unwrap_or_default();
+        let data = config::data_dir();
+        let wait = "ping -n 3 127.0.0.1 >nul";
+        let script = if update::is_installed() {
+            let unins = exe.parent().map(|d| d.join("unins000.exe")).unwrap_or_default();
+            format!("{wait} & \"{}\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART & rmdir /s /q \"{}\"", unins.display(), data.display())
+        } else {
+            format!("{wait} & del /f /q \"{}\" & rmdir /s /q \"{}\"", exe.display(), data.display())
+        };
+        native::run_detached(&script);
+        let _ = slint::quit_event_loop();
+    }
+
+    fn toggle_more(&mut self) {
+        self.expanded = !self.expanded;
+        let t = self.shown_text.clone();
+        self.show_answer(&t);
+    }
+
+    /// Settings slider for the size of the answer text: applies at once and is saved.
+    fn set_text_scale_index(&mut self, i: usize) {
+        let scales = config::TEXT_SCALES;
+        let v = scales[i.min(scales.len() - 1)];
+        if self.cfg.text_scale == Some(v) {
+            return;
+        }
+        self.cfg.text_scale = Some(v);
+        let ui = self.ui();
+        ui.set_text_scale(v as f32 / 100.0);
+        ui.set_text_scale_index(i.min(scales.len() - 1) as i32);
+        self.save_soon();
+    }
+
+    // ---------- paperclip ----------
+
+    fn refresh_files(&self) {
+        let items: Vec<FileItem> = self
+            .attached
+            .iter()
+            .map(|(label, folder, files)| FileItem {
+                name: label.as_str().into(),
+                info: if *folder { format!("· {}", files_word(files.len())) } else { String::new() }.into(),
+                folder: *folder,
+            })
+            .collect();
+        self.ui().set_files(ModelRc::new(VecModel::from(items)));
+    }
+
+    fn all_files(&self) -> Vec<llm::Attachment> {
+        self.attached.iter().flat_map(|(_, _, f)| f.iter().cloned()).collect()
+    }
+
+    fn take_files(&mut self) -> Vec<llm::Attachment> {
+        let f = self.all_files();
+        self.attached.clear();
+        self.refresh_files();
+        f
+    }
+
+    fn remove_file(&mut self, i: usize) {
+        if i < self.attached.len() {
+            self.attached.remove(i);
+            self.refresh_files();
+        }
+    }
+
+    /// Opens the system dialog on a helper thread (it blocks) and attaches what was picked.
+    fn attach_pick(&mut self, folder: bool) {
+        if self.dialog_open.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let owner = self.hwnd().unwrap_or(0);
+        let flag = self.dialog_open.clone();
+        std::thread::spawn(move || {
+            let picked = native::pick_paths(folder, owner);
+            let _ = slint::invoke_from_event_loop(move || {
+                flag.store(false, Ordering::SeqCst);
+                with_app(|a| a.files_picked(picked));
+            });
+        });
+    }
+
+    fn files_dropped(&mut self, path: std::path::PathBuf) {
+        if self.composer.is_none() || self.ui().get_settings_open() {
+            return;
+        }
+        self.files_picked(vec![path]);
+    }
+
+    fn files_picked(&mut self, paths: Vec<std::path::PathBuf>) {
+        if let Some(h) = self.hwnd() {
+            native::focus_window(h);
+        }
+        self.ui().invoke_focus_input();
+        if paths.is_empty() {
+            return;
+        }
+        let already = self.all_files();
+        let loaded = attach::load(&paths, &already);
+        // one chip per folder, one chip per single file
+        let mut left = loaded.files;
+        for p in &paths {
+            let base = p.file_name().and_then(|n| n.to_str()).unwrap_or("файл").to_string();
+            if p.is_dir() {
+                let prefix = format!("{base}/");
+                let (mine, rest): (Vec<_>, Vec<_>) = left.into_iter().partition(|f| f.name.starts_with(&prefix));
+                left = rest;
+                if !mine.is_empty() {
+                    self.attached.push((base, true, mine));
+                }
+            } else if let Some(pos) = left.iter().position(|f| f.name == base) {
+                let f = left.remove(pos);
+                self.attached.push((base, false, vec![f]));
+            }
+        }
+        self.refresh_files();
+        if !loaded.skipped.is_empty() {
+            let note = format!("Пропущено: {}", loaded.skipped.join("; "));
+            self.toast(&note);
+        }
     }
 
     fn set_busy(&mut self, on: bool) {
@@ -630,17 +883,21 @@ impl App {
         ui.set_thinking(false);
         let Some(e) = self.answers.get(self.idx) else {
             ui.set_question_text("".into());
-            ui.set_body_text("".into());
+            self.show_plain("");
             self.set_nav(true);
             return;
         };
         ui.set_question_text(question_line(&e.question).into());
-        ui.set_body_text(e.text.as_str().into());
+        let text = e.text.clone();
+        let follow_up_now = !self.overlay_view && e.chat == Some(self.chat_id) && self.idx + 1 == self.answers.len();
+        self.expanded = false;
+        self.select_mode = false;
+        self.show_answer(&text);
         self.fit_overlay();
-        let follow_up = !self.overlay_view && e.chat == Some(self.chat_id) && self.idx + 1 == self.answers.len();
+        let follow_up = follow_up_now;
         self.set_nav(true);
         if follow_up {
-            ui.set_composer_placeholder("Уточни ответ".into());
+            ui.set_composer_placeholder("Уточни ответ или прикрепи файл".into());
             ui.set_composer_text("".into());
             self.composer = Some(Composer::FollowUp);
             ui.set_composer_on(true);
@@ -680,13 +937,15 @@ impl App {
         ui.set_question_text("".into());
         ui.set_hint_text("".into());
         ui.set_thinking(false);
-        ui.set_body_text(label.into());
+        self.show_plain(label);
         self.set_nav(false);
         ui.set_composer_placeholder(placeholder.into());
         if !keep {
             ui.set_composer_text("".into());
             self.pending.clear();
             self.refresh_thumbs();
+            self.attached.clear();
+            self.refresh_files();
         }
         self.composer = Some(comp);
         ui.set_composer_on(true);
@@ -717,31 +976,37 @@ impl App {
         let Some(comp) = self.composer.clone() else { return };
         match comp {
             Composer::Free => {
-                if extra.is_empty() && self.pending.is_empty() {
+                if extra.is_empty() && self.pending.is_empty() && self.attached.is_empty() {
                     self.hide_window();
                     return;
                 }
                 self.ask_in_chat(extra);
             }
             Composer::FollowUp => {
-                if extra.is_empty() && self.pending.is_empty() {
+                if extra.is_empty() && self.pending.is_empty() && self.attached.is_empty() {
                     return;
                 }
                 self.ask_in_chat(extra);
             }
             Composer::Selection(text) => {
                 let imgs = self.take_pending();
+                let files = self.take_files();
                 self.new_chat();
                 let cid = self.chat_id;
                 if imgs.is_empty() {
-                    self.send(Request { text: text.clone(), extra, ..Default::default() }, Some(text), Some(cid));
+                    self.send(Request { text: text.clone(), extra, files, ..Default::default() }, Some(text), Some(cid));
                 } else {
                     let combined = if extra.is_empty() { text.clone() } else { format!("{text}\n{extra}") };
-                    self.send(Request { extra: combined, images: imgs, ..Default::default() }, Some(text), Some(cid));
+                    self.send(Request { extra: combined, images: imgs, files, ..Default::default() }, Some(text), Some(cid));
                 }
             }
             Composer::Shot => {
                 if self.pending.is_empty() {
+                    if !self.attached.is_empty() {
+                        self.new_chat();
+                        self.ask_in_chat(extra);
+                        return;
+                    }
                     // every snapshot was removed: what is left is an ordinary question
                     if !extra.is_empty() {
                         self.new_chat();
@@ -750,23 +1015,26 @@ impl App {
                     return;
                 }
                 let all = self.take_pending();
+                let files = self.take_files();
                 self.new_chat();
                 let cid = self.chat_id;
                 let q = if extra.is_empty() { "[скриншот]".to_string() } else { extra.clone() };
-                self.send(Request { extra, images: all, ..Default::default() }, Some(q), Some(cid));
+                self.send(Request { extra, images: all, files, ..Default::default() }, Some(q), Some(cid));
             }
         }
     }
 
     fn ask_in_chat(&mut self, q: String) {
         let imgs = self.take_pending();
+        let files = self.take_files();
         let history = self.chat.clone();
         let cid = self.chat_id;
         if imgs.is_empty() {
-            self.send(Request { text: q.clone(), history, ..Default::default() }, Some(q), Some(cid));
+            let rq = if q.is_empty() { "[файлы]".to_string() } else { q.clone() };
+            self.send(Request { text: q, history, files, ..Default::default() }, Some(rq), Some(cid));
         } else {
             let rq = if q.is_empty() { "[скриншот]".to_string() } else { q.clone() };
-            self.send(Request { extra: q, images: imgs, history, ..Default::default() }, Some(rq), Some(cid));
+            self.send(Request { extra: q, images: imgs, history, files, ..Default::default() }, Some(rq), Some(cid));
         }
     }
 
@@ -779,6 +1047,7 @@ impl App {
         self.fit_overlay();
         self.live_req.store(id, Ordering::SeqCst);
         self.streaming.clear();
+        self.expanded = false;
         self.in_flight = Some((req.clone(), record_q.clone(), chat));
         self.set_busy(true);
         let cfg = self.cfg.clone();
@@ -798,7 +1067,7 @@ impl App {
             self.streaming = text.to_string();
             let ui = self.ui();
             ui.set_thinking(false);
-            ui.set_body_text(text.into());
+            self.show_answer(text);
             self.fit_overlay(); // the background grows right behind the text
         }
     }
@@ -833,7 +1102,7 @@ impl App {
                 self.history.add(self.cfg.history_on(), &req, &answer);
                 if let (Some(q), Some(cid)) = (&record_q, chat) {
                     if cid == self.chat_id {
-                        record_turn(&mut self.chat, q, &answer);
+                        record_turn(&mut self.chat, q, &md::without_mark(&answer));
                     }
                 }
                 (answer, false)
@@ -882,6 +1151,10 @@ impl App {
     /// Esc or the close button: stop a running request (the next open starts a new chat anyway) and hide.
     /// A pinned window only stops the request.
     fn close_pressed(&mut self) {
+        if self.ui().get_uninstall_open() {
+            self.uninstall_cancel();
+            return;
+        }
         let was_busy = self.busy;
         self.stop();
         if was_busy && self.pinned {
@@ -957,7 +1230,7 @@ impl App {
         let Some(e) = self.history.list().get(i).cloned() else { return };
         self.stop();
         self.new_chat();
-        self.chat = vec![Turn { model: false, text: e.q.clone() }, Turn { model: true, text: e.a.clone() }];
+        self.chat = vec![Turn { model: false, text: e.q.clone() }, Turn { model: true, text: md::without_mark(&e.a) }];
         let cid = self.chat_id;
         self.push_answer(Answer { text: e.a, req: None, chat: Some(cid), is_error: false, record_q: None, question: e.q });
     }
@@ -996,6 +1269,13 @@ impl App {
                 }
             }
         }
+        // temporary developer shortcut: uninstalls at once, without asking
+        if let Ok(hk) = HotKey::from_str("Alt+Shift+Delete") {
+            if self.hot_mgr.register(hk).is_ok() {
+                self.hot_ids.insert(hk.id(), 4);
+                self.registered.push(hk);
+            }
+        }
         failed
     }
 
@@ -1010,6 +1290,7 @@ impl App {
             }
             1 => self.start_screenshot(),
             3 => self.retry_last(),
+            4 => self.uninstall_now(),
             _ if self.cfg.overlay_mode && self.visible && self.overlay_view => self.hide_window(),
             _ => self.mode_free(),
         }
@@ -1283,6 +1564,8 @@ impl App {
         ui.set_autostart(self.cfg.autostart);
         ui.set_history_enabled(self.cfg.history_on());
         ui.set_overlay_mode(self.cfg.overlay_mode);
+        ui.set_two_level(self.cfg.two_level_on());
+        ui.set_text_scale_index(config::TEXT_SCALES.iter().position(|&x| x == self.cfg.text_scale()).unwrap_or(1) as i32);
         ui.set_overlay_fonts(ModelRc::new(VecModel::from(config::OVERLAY_FONTS.iter().map(|&f| f as i32).collect::<Vec<_>>())));
         ui.set_overlay_font_index(self.cfg.overlay_font_index() as i32);
         ui.set_shot_mode(self.cfg.shot_mode_index() as i32);
@@ -1411,6 +1694,7 @@ impl App {
         self.cfg.history = Some(input.history);
         self.cfg.autostart = input.autostart;
         self.cfg.overlay_mode = ui.get_overlay_mode();
+        self.cfg.two_level = Some(ui.get_two_level());
         let fi = (ui.get_overlay_font_index().max(0) as usize).min(config::OVERLAY_FONTS.len() - 1);
         self.cfg.overlay_font = Some(config::OVERLAY_FONTS[fi]);
         let shot = (ui.get_shot_mode().max(0) as usize).min(SHOT_MODES.len() - 1);
@@ -1618,6 +1902,97 @@ impl App {
     }
 }
 
+
+/// Debug builds only: with NORTEX_DEMO_OUT=<dir> shows sample answers and saves screenshots of the window.
+#[cfg(debug_assertions)]
+fn run_demo(out: std::path::PathBuf) {
+    fn shot(out: &std::path::Path, name: &str) {
+        let Some(h) = APP.with(|a| a.borrow().as_ref().and_then(|r| r.borrow().hwnd())) else { return };
+        let Some((x, y, w, ht)) = native::window_rect(h) else { return };
+        let Some((mx, my, mw, _mh, rgba)) = native::capture_cursor_monitor_rect() else { return };
+        let (cx, cy) = ((x - mx).max(0) as u32, (y - my).max(0) as u32);
+        let (w, ht) = (w.min(mw.saturating_sub(cx)), ht);
+        let mut img = image::RgbaImage::new(w, ht);
+        for yy in 0..ht {
+            for xx in 0..w {
+                let i = (((cy + yy) * mw + cx + xx) * 4) as usize;
+                if i + 3 < rgba.len() {
+                    img.put_pixel(xx, yy, image::Rgba([rgba[i + 2], rgba[i + 1], rgba[i], 255]));
+                }
+            }
+        }
+        let _ = img.save(out.join(name));
+    }
+    const ANSWER: &str = r#"Ответ: **x = 5** и **x = −1**.
+<<<MORE>>>
+## Решение
+Решаем квадратное уравнение $x^2 - 4x - 5 = 0$ через дискриминант.
+
+$$D = b^2 - 4ac = 16 + 20 = 36$$
+
+1. Находим **дискриминант**: $D = 36$.
+2. Корни: $x = \frac{4 \pm \sqrt{36}}{2}$.
+
+- первый корень: 5
+- второй корень: −1
+
+> Проверка: $5^2 - 4\cdot 5 - 5 = 0$.
+
+```python
+import math
+d = 16 + 20
+print((4 + math.sqrt(d)) / 2)
+```"#;
+    let o = out.clone();
+    Timer::single_shot(Duration::from_millis(900), move || {
+        with_app(|a| {
+            a.mode_free();
+            a.new_chat();
+            let cid = a.chat_id;
+            a.push_answer(Answer { text: ANSWER.into(), req: None, chat: Some(cid), is_error: false, record_q: None, question: "Реши x^2 - 4x - 5 = 0".into() });
+        });
+    });
+    Timer::single_shot(Duration::from_millis(2200), {
+        let o = o.clone();
+        move || shot(&o, "1_short.png")
+    });
+    Timer::single_shot(Duration::from_millis(2600), || with_app(|a| a.toggle_more()));
+    Timer::single_shot(Duration::from_millis(4000), {
+        let o = o.clone();
+        move || shot(&o, "2_long.png")
+    });
+    Timer::single_shot(Duration::from_millis(4300), || {
+        with_app(|a| {
+            let dir = std::env::var("NORTEX_DEMO_FILES").unwrap_or_default();
+            a.files_picked(vec![std::path::PathBuf::from(&dir), std::path::PathBuf::from(&dir).join("notes.txt")]);
+        })
+    });
+    Timer::single_shot(Duration::from_millis(5600), {
+        let o = o.clone();
+        move || shot(&o, "3_attach.png")
+    });
+    Timer::single_shot(Duration::from_millis(5900), || with_app(|a| a.toggle_select()));
+    Timer::single_shot(Duration::from_millis(6800), {
+        let o = o.clone();
+        move || shot(&o, "5_select.png")
+    });
+    Timer::single_shot(Duration::from_millis(7000), || with_app(|a| a.toggle_select()));
+    Timer::single_shot(Duration::from_millis(7200), || with_app(|a| a.uninstall_ask()));
+    Timer::single_shot(Duration::from_millis(8800), {
+        let o = o.clone();
+        move || shot(&o, "6_unin.png")
+    });
+    Timer::single_shot(Duration::from_millis(9200), || with_app(|a| a.uninstall_cancel()));
+    Timer::single_shot(Duration::from_millis(9400), || with_app(|a| a.toggle_settings()));
+    Timer::single_shot(Duration::from_millis(10800), {
+        let o = o.clone();
+        move || shot(&o, "4_settings.png")
+    });
+    Timer::single_shot(Duration::from_millis(11200), || {
+        let _ = slint::quit_event_loop();
+    });
+}
+
 fn main() {
     std::panic::set_hook(Box::new(|info| log_err(&format!("panic: {info}"))));
     if std::env::args().any(|a| a == update::AFTER_UPDATE_ARG) {
@@ -1667,6 +2042,14 @@ fn main() {
         .expect("select winit backend");
 
     let ui = MainWindow::new().expect("create window");
+    // files and folders dragged from Explorer into the window are attached like the paperclip ones
+    ui.window().on_winit_window_event(|_, event| {
+        if let slint::winit_030::winit::event::WindowEvent::DroppedFile(path) = event {
+            let path = path.clone();
+            let _ = slint::invoke_from_event_loop(move || with_app(|a| a.files_dropped(path)));
+        }
+        slint::winit_030::EventResult::Propagate
+    });
     {
         let theme = ui.global::<Theme>();
         theme.set_dark(cfg.dark());
@@ -1706,6 +2089,13 @@ fn main() {
         chat: Vec::new(),
         composer: None,
         pending: Vec::new(),
+        attached: Vec::new(),
+        dialog_open: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        expanded: false,
+        select_mode: false,
+        uninstall_left: 0,
+        uninstall_timer: Timer::default(),
+        shown_text: String::new(),
         visible: false,
         overlay_view: false,
         auto_hide: None,
@@ -1748,7 +2138,8 @@ fn main() {
         let weak = ui.as_weak();
         move || {
             let Some(ui) = weak.upgrade() else { return };
-            clip::set_text(&ui.get_body_text());
+            let full = APP.with(|a| a.borrow().as_ref().map(|r| r.borrow().shown_text.clone())).unwrap_or_default();
+            clip::set_text(&if full.is_empty() { ui.get_body_text().to_string() } else { md::short_plain(&full) });
             ui.set_copy_done(true);
             let w2 = weak.clone();
             Timer::single_shot(Duration::from_millis(1200), move || {
@@ -1758,6 +2149,15 @@ fn main() {
             });
         }
     });
+    ui.on_toggle_more(|| with_app(|a| a.toggle_more()));
+    ui.on_toggle_select(|| with_app(|a| a.toggle_select()));
+    ui.on_copy_code(|t| with_app(|a| a.copy_code(&t)));
+    ui.on_uninstall_ask(|| with_app(|a| a.uninstall_ask()));
+    ui.on_uninstall_cancel(|| with_app(|a| a.uninstall_cancel()));
+    ui.on_uninstall_confirm(|| with_app(|a| a.uninstall_confirmed()));
+    ui.on_text_scale_changed(|i| with_app(|a| a.set_text_scale_index(i.max(0) as usize)));
+    ui.on_attach_pick(|folder| with_app(|a| a.attach_pick(folder)));
+    ui.on_remove_file(|i| with_app(|a| a.remove_file(i.max(0) as usize)));
     ui.on_toggle_history(|| with_app(|a| a.toggle_history()));
     ui.on_clear_history(|| with_app(|a| a.clear_history()));
     ui.on_toggle_settings(|| with_app(|a| a.toggle_settings()));
@@ -1916,6 +2316,11 @@ fn main() {
         a.show_status(&hint);
         a.show_window();
         Timer::single_shot(Duration::from_millis(200), || with_app(|a| a.toggle_settings()));
+    }
+
+    #[cfg(debug_assertions)]
+    if let Ok(dir) = std::env::var("NORTEX_DEMO_OUT") {
+        run_demo(std::path::PathBuf::from(dir));
     }
 
     slint::run_event_loop_until_quit().expect("event loop");

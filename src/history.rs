@@ -38,6 +38,10 @@ pub fn describe(req: &Request) -> String {
         q.push_str(" - ");
         q.push_str(&req.extra);
     }
+    if !req.files.is_empty() {
+        let names: Vec<&str> = req.files.iter().take(3).map(|f| f.name.as_str()).collect();
+        q.push_str(&format!(" [файлы: {}{}]", names.join(", "), if req.files.len() > 3 { format!(" и ещё {}", req.files.len() - 3) } else { String::new() }));
+    }
     q
 }
 

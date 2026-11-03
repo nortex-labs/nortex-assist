@@ -15,6 +15,8 @@ pub const MIN_OPACITY: f32 = 0.10;
 /// Text sizes (px) offered for the game-overlay window; the window itself fits the text.
 pub const OVERLAY_FONTS: [u32; 8] = [12, 14, 16, 18, 20, 24, 28, 32];
 pub const DEFAULT_OVERLAY_FONT: u32 = 16;
+/// Answer text sizes (percent) the A− / A+ buttons step through.
+pub const TEXT_SCALES: [u32; 6] = [85, 100, 115, 130, 150, 175];
 pub const MAX_PROMPT: usize = 8000;
 pub const SHOT_MODES: [&str; 3] = ["select", "full", "snip"];
 pub const HOTKEY_NAMES: [&str; 4] = ["selection", "screenshot", "free", "retry"];
@@ -92,6 +94,10 @@ pub struct Config {
     pub bounds: Option<Rect>,
     /// Own system prompt; empty means the built-in one.
     pub prompt: String,
+    /// Short answer first, details behind a button; on unless this is `Some(false)`.
+    pub two_level: Option<bool>,
+    /// Size of the answer text in percent (one of TEXT_SCALES); None = 100.
+    pub text_scale: Option<u32>,
 }
 
 impl Config {
@@ -112,6 +118,12 @@ impl Config {
     }
     pub fn overlay_font_index(&self) -> usize {
         OVERLAY_FONTS.iter().position(|&f| f == self.overlay_font()).unwrap_or(2)
+    }
+    pub fn two_level_on(&self) -> bool {
+        self.two_level != Some(false)
+    }
+    pub fn text_scale(&self) -> u32 {
+        self.text_scale.filter(|s| TEXT_SCALES.contains(s)).unwrap_or(100)
     }
     pub fn dark(&self) -> bool {
         self.theme != "light"
