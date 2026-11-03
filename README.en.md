@@ -6,7 +6,7 @@
 
 <p align="center">
   A hotkey AI assistant for Windows: ask Gemini or Groq about selected text,<br>
-  a screenshot, or anything you type.
+  a screenshot, a file or anything you type.
 </p>
 
 <p align="center">
@@ -47,11 +47,12 @@ Both update themselves. If Windows SmartScreen warns about an unknown publisher,
 
 ## Features
 
-- **Short answer first.** A one-line answer appears at once; the "Show more" button opens the full explanation.
-- **Readable answers.** Headings, lists, formulas and code blocks (each with its own "Copy code" button). The "Copy" button in the toolbar copies the short answer without formatting; "Select text" turns the answer into plain text you can select with the mouse.
-- **Files.** The paperclip next to the input field attaches text files to your question.
-- **On top of windows.** A small click-through window with a short answer that never takes focus: works over games, videos and lectures.
-- **Two languages.** The whole interface, and the answers, can be switched between Russian and English.
+- **Short answer first.** A one-line answer appears at once; the "Show more" button opens the full explanation (it can be turned off in the settings, "Answers").
+- **Readable answers.** Headings, lists, quotes, formulas and code blocks, each code block with its own "Copy code" button. The "Copy" button in the toolbar copies the short answer without formatting; "Select text" turns the answer into plain text you can select with the mouse.
+- **Files.** The paperclip next to the input field attaches text files to your question. A folder can be dragged into the pinned window.
+- **On top of windows.** A small click-through window with a short answer that never takes focus: works over games, videos and lectures (settings, "Appearance").
+- **Two languages.** The whole interface and the answers can be switched between Russian and English with the RU | EN button at the bottom of the settings. By default the answer is written in the language of the question, and in Russian when the language cannot be told.
+- **Your way.** Answer style (own prompt and presets), answer text size, dark and light theme, opacity, accent colour, your own hotkeys.
 
 ## Hotkeys
 
@@ -65,6 +66,10 @@ You can change them in the settings.
 | **Alt+S** | Repeat the last request. If an answer already came, the model tries a different one |
 
 Esc hides the window and stops the answer. Ctrl+V in the input field pastes an image.
+
+## Uninstalling
+
+Use "Settings → Apps" in Windows for the installed version, or the trash icon at the bottom of the app's settings: it asks for confirmation and the "Delete" button turns on after 5 seconds. The hidden shortcut **Alt+Shift+Delete** removes the app together with its settings, keys and history at once, without asking.
 
 ## Privacy
 

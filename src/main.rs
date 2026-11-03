@@ -1928,6 +1928,9 @@ fn run_demo(out: std::path::PathBuf) {
     if std::env::var("NORTEX_DEMO_LIVE").is_ok() {
         return run_demo_live(out);
     }
+    if std::env::var("NORTEX_DEMO_README").is_ok() {
+        return run_demo_readme(out);
+    }
     if let Ok(qs) = std::env::var("NORTEX_DEMO_QS") {
         return run_demo_real(out, qs.split('|').map(|q| q.trim().to_string()).filter(|q| !q.is_empty()).collect());
     }
@@ -2162,6 +2165,71 @@ fn run_demo_real(out: std::path::PathBuf, qs: Vec<String>) {
         });
     });
     std::mem::forget(timer);
+}
+
+/// Debug builds only: the three pictures of the README (main window, an answer with details, settings).
+#[cfg(debug_assertions)]
+fn run_demo_readme(out: std::path::PathBuf) {
+    fn shot(out: &std::path::Path, name: &str) {
+        let Some(h) = APP.with(|a| a.borrow().as_ref().and_then(|r| r.borrow().hwnd())) else { return };
+        let Some((x, y, w, ht)) = native::window_rect(h) else { return };
+        let Some((mx, my, mw, _mh, rgba)) = native::capture_cursor_monitor_rect() else { return };
+        let (cx, cy) = ((x - mx).max(0) as u32, (y - my).max(0) as u32);
+        let w = w.min(mw.saturating_sub(cx));
+        let mut img = image::RgbaImage::new(w, ht);
+        for yy in 0..ht {
+            for xx in 0..w {
+                let i = (((cy + yy) * mw + cx + xx) * 4) as usize;
+                if i + 3 < rgba.len() {
+                    img.put_pixel(xx, yy, image::Rgba([rgba[i], rgba[i + 1], rgba[i + 2], 255]));
+                }
+            }
+        }
+        let _ = img.save(out.join(name));
+    }
+    const ANSWER: &str = r#"Ответ: **x = 5** и **x = −1**.
+<<<MORE>>>
+## Решение
+Решаем квадратное уравнение $x^2 - 4x - 5 = 0$ через дискриминант.
+
+$$D = b^2 - 4ac = 16 + 20 = 36$$
+
+1. Находим **дискриминант**: $D = 36$.
+2. Корни: $x = \frac{4 \pm \sqrt{36}}{2}$.
+
+- первый корень: 5
+- второй корень: −1
+
+```python
+import math
+d = 16 + 20
+print((4 + math.sqrt(d)) / 2)
+```"#;
+    Timer::single_shot(Duration::from_millis(900), || with_app(|a| a.mode_free()));
+    Timer::single_shot(Duration::from_millis(2200), { let o = out.clone(); move || shot(&o, "screenshot-main.png") });
+    Timer::single_shot(Duration::from_millis(2500), || {
+        with_app(|a| {
+            a.new_chat();
+            let cid = a.chat_id;
+            a.push_answer(Answer { text: ANSWER.into(), req: None, chat: Some(cid), is_error: false, record_q: None, question: "Реши x^2 - 4x - 5 = 0".into() });
+        })
+    });
+    Timer::single_shot(Duration::from_millis(3500), || with_app(|a| a.toggle_more()));
+    Timer::single_shot(Duration::from_millis(4800), { let o = out.clone(); move || shot(&o, "screenshot-answer.png") });
+    Timer::single_shot(Duration::from_millis(5000), || with_app(|a| a.toggle_settings()));
+    Timer::single_shot(Duration::from_millis(5600), || {
+        with_app(|a| {
+            if let Some(h) = a.hwnd() {
+                if let Some((x, _y, w, _)) = native::window_rect(h) {
+                    native::set_window_rect(h, x, 0, w, 1010);
+                }
+            }
+        })
+    });
+    Timer::single_shot(Duration::from_millis(7000), { let o = out.clone(); move || shot(&o, "screenshot-settings.png") });
+    Timer::single_shot(Duration::from_millis(7400), || {
+        let _ = slint::quit_event_loop();
+    });
 }
 
 fn main() {
