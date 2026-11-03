@@ -719,10 +719,6 @@ impl App {
                 quit.set_text(i18n::tr("Выход"));
             }
         });
-        // an idle window shows the hint of the free question in the new language
-        if matches!(self.composer, Some(Composer::Free)) {
-            self.mode_free();
-        }
         config::save(&self.store, &self.cfg);
     }
 
@@ -877,20 +873,8 @@ impl App {
         let already = self.all_files();
         let loaded = attach::load(&paths, &already);
         // one chip per folder, one chip per single file
-        let mut left = loaded.files;
-        for p in &paths {
-            let base = p.file_name().and_then(|n| n.to_str()).map(str::to_string).unwrap_or_else(|| i18n::tr("файл"));
-            if p.is_dir() {
-                let prefix = format!("{base}/");
-                let (mine, rest): (Vec<_>, Vec<_>) = left.into_iter().partition(|f| f.name.starts_with(&prefix));
-                left = rest;
-                if !mine.is_empty() {
-                    self.attached.push((base, true, mine));
-                }
-            } else if let Some(pos) = left.iter().position(|f| f.name == base) {
-                let f = left.remove(pos);
-                self.attached.push((base, false, vec![f]));
-            }
+        for g in loaded.groups {
+            self.attached.push((g.label, g.folder, g.files));
         }
         self.refresh_files();
         if !loaded.skipped.is_empty() {
@@ -1082,6 +1066,7 @@ impl App {
         self.live_req.store(id, Ordering::SeqCst);
         self.streaming.clear();
         self.expanded = false;
+        self.select_mode = false;
         self.in_flight = Some((req.clone(), record_q.clone(), chat));
         self.set_busy(true);
         let cfg = self.cfg.clone();
@@ -1157,7 +1142,7 @@ impl App {
         let Some(e) = self.answers.get(self.idx) else { return };
         let Some(mut req) = e.req.clone() else { return };
         if !e.is_error {
-            req.rejected.push(e.text.clone());
+            req.rejected.push(md::without_mark(&e.text));
         }
         let keep = req.rejected.len().saturating_sub(3);
         req.rejected.drain(..keep);
@@ -1940,6 +1925,9 @@ impl App {
 /// Debug builds only: with NORTEX_DEMO_OUT=<dir> shows sample answers and saves screenshots of the window.
 #[cfg(debug_assertions)]
 fn run_demo(out: std::path::PathBuf) {
+    if std::env::var("NORTEX_DEMO_LIVE").is_ok() {
+        return run_demo_live(out);
+    }
     fn shot(out: &std::path::Path, name: &str) {
         let Some(h) = APP.with(|a| a.borrow().as_ref().and_then(|r| r.borrow().hwnd())) else { return };
         let Some((x, y, w, ht)) = native::window_rect(h) else { return };
@@ -2018,6 +2006,15 @@ print((4 + math.sqrt(d)) / 2)
     });
     Timer::single_shot(Duration::from_millis(9200), || with_app(|a| a.uninstall_cancel()));
     Timer::single_shot(Duration::from_millis(9400), || with_app(|a| a.toggle_settings()));
+    Timer::single_shot(Duration::from_millis(10300), || {
+        with_app(|a| {
+            if let Some(h) = a.hwnd() {
+                if let Some((x, _y, w, _)) = native::window_rect(h) {
+                    native::set_window_rect(h, x, 0, w, 1010);
+                }
+            }
+        })
+    });
     Timer::single_shot(Duration::from_millis(10800), {
         let o = o.clone();
         move || shot(&o, "4_settings.png")
@@ -2034,6 +2031,48 @@ print((4 + math.sqrt(d)) / 2)
         move || shot(&o, "8_en_free.png")
     });
     Timer::single_shot(Duration::from_millis(14200), || {
+        let _ = slint::quit_event_loop();
+    });
+}
+
+/// Debug builds only: a real request against the local mock server, screenshots while it streams.
+#[cfg(debug_assertions)]
+fn run_demo_live(out: std::path::PathBuf) {
+    fn shot(out: &std::path::Path, name: &str) {
+        let Some(h) = APP.with(|a| a.borrow().as_ref().and_then(|r| r.borrow().hwnd())) else { return };
+        let Some((x, y, w, ht)) = native::window_rect(h) else { return };
+        let Some((mx, my, mw, _mh, rgba)) = native::capture_cursor_monitor_rect() else { return };
+        let (cx, cy) = ((x - mx).max(0) as u32, (y - my).max(0) as u32);
+        let w = w.min(mw.saturating_sub(cx));
+        let mut img = image::RgbaImage::new(w, ht);
+        for yy in 0..ht {
+            for xx in 0..w {
+                let i = (((cy + yy) * mw + cx + xx) * 4) as usize;
+                if i + 3 < rgba.len() {
+                    img.put_pixel(xx, yy, image::Rgba([rgba[i], rgba[i + 1], rgba[i + 2], 255]));
+                }
+            }
+        }
+        let _ = img.save(out.join(name));
+    }
+    Timer::single_shot(Duration::from_millis(800), || {
+        with_app(|a| {
+            a.mode_free();
+            a.new_chat();
+            let cid = a.chat_id;
+            a.send(Request { text: "Реши x^2 - 4x - 5 = 0".into(), ..Default::default() }, Some("Реши".into()), Some(cid));
+        })
+    });
+    Timer::single_shot(Duration::from_millis(1500), { let o = out.clone(); move || shot(&o, "L1_streaming.png") });
+    Timer::single_shot(Duration::from_millis(6500), { let o = out.clone(); move || shot(&o, "L2_done.png") });
+    Timer::single_shot(Duration::from_millis(6700), || with_app(|a| a.toggle_more()));
+    Timer::single_shot(Duration::from_millis(7500), { let o = out.clone(); move || shot(&o, "L3_more.png") });
+    Timer::single_shot(Duration::from_millis(7700), || with_app(|a| a.retry()));
+    Timer::single_shot(Duration::from_millis(9500), || {
+        let rej = APP.with(|a| a.borrow().as_ref().map(|r| r.borrow().answers.len()).unwrap_or(0));
+        log_err(&format!("demo: answers after retry = {rej}"));
+    });
+    Timer::single_shot(Duration::from_millis(10500), || {
         let _ = slint::quit_event_loop();
     });
 }

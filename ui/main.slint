@@ -1227,12 +1227,6 @@ export component MainWindow inherits Window {
                             clicked => { root.toggle-select(); }
                         }
                         Rectangle { horizontal-stretch: 1; }
-                        LangToggle {
-                            y: 2px;
-                            en: root.lang-en;
-                            clicked => { root.toggle-lang(); }
-                        }
-                        Rectangle { width: 4px; }
                         IconButton { icon: @image-url("icons/history.svg"); tip: @tr("История: прошлые вопросы и ответы.\nОтвет из истории можно уточнить"); active: root.history-open; clicked => { root.toggle-history(); } }
                         IconButton { icon: @image-url("icons/settings.svg"); tip: @tr("Настройки"); active: root.settings-open; clicked => { root.toggle-settings(); } }
                         IconButton { icon: @image-url("icons/pin.svg"); tip: @tr("Закрепить окно: оно не будет прятаться,\nкогда кликаешь в другое место или жмёшь Esc"); active: root.pinned; clicked => { root.toggle-pin(); } }
@@ -1738,6 +1732,11 @@ export component MainWindow inherits Window {
                                 icon: @image-url("icons/trash.svg");
                                 tip: @tr("Удалить программу.\nПопросит подтвердить, кнопка включится через 5 секунд");
                                 clicked => { root.uninstall-ask(); }
+                            }
+                            LangToggle {
+                                y: 3px;
+                                en: root.lang-en;
+                                clicked => { root.toggle-lang(); }
                             }
                             Text {
                                 text: root.saved-text;
