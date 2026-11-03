@@ -1928,6 +1928,9 @@ fn run_demo(out: std::path::PathBuf) {
     if std::env::var("NORTEX_DEMO_LIVE").is_ok() {
         return run_demo_live(out);
     }
+    if let Ok(qs) = std::env::var("NORTEX_DEMO_QS") {
+        return run_demo_real(out, qs.split('|').map(|q| q.trim().to_string()).filter(|q| !q.is_empty()).collect());
+    }
     fn shot(out: &std::path::Path, name: &str) {
         let Some(h) = APP.with(|a| a.borrow().as_ref().and_then(|r| r.borrow().hwnd())) else { return };
         let Some((x, y, w, ht)) = native::window_rect(h) else { return };
@@ -2075,6 +2078,87 @@ fn run_demo_live(out: std::path::PathBuf) {
     Timer::single_shot(Duration::from_millis(10500), || {
         let _ = slint::quit_event_loop();
     });
+}
+
+/// Debug builds only: asks the questions one after another with the configured provider and key,
+/// writes the raw answers to answers.txt and takes screenshots of the short and the opened answer.
+#[cfg(debug_assertions)]
+fn run_demo_real(out: std::path::PathBuf, qs: Vec<String>) {
+    fn shot(out: &std::path::Path, name: &str) {
+        let Some(h) = APP.with(|a| a.borrow().as_ref().and_then(|r| r.borrow().hwnd())) else { return };
+        let Some((x, y, w, ht)) = native::window_rect(h) else { return };
+        let Some((mx, my, mw, _mh, rgba)) = native::capture_cursor_monitor_rect() else { return };
+        let (cx, cy) = ((x - mx).max(0) as u32, (y - my).max(0) as u32);
+        let w = w.min(mw.saturating_sub(cx));
+        let mut img = image::RgbaImage::new(w, ht);
+        for yy in 0..ht {
+            for xx in 0..w {
+                let i = (((cy + yy) * mw + cx + xx) * 4) as usize;
+                if i + 3 < rgba.len() {
+                    img.put_pixel(xx, yy, image::Rgba([rgba[i], rgba[i + 1], rgba[i + 2], 255]));
+                }
+            }
+        }
+        let _ = img.save(out.join(name));
+    }
+    struct St {
+        next: usize,
+        waiting: bool,
+        pause: bool,
+        started: Instant,
+    }
+    let st = Rc::new(RefCell::new(St { next: 0, waiting: false, pause: false, started: Instant::now() }));
+    let provider = std::env::var("NORTEX_DEMO_PROVIDER").unwrap_or_default();
+    let timer = Rc::new(Timer::default());
+    let t2 = timer.clone();
+    timer.start(TimerMode::Repeated, Duration::from_millis(500), move || {
+        let mut s = st.borrow_mut();
+        if s.pause {
+            return;
+        }
+        if !s.waiting {
+            if s.next >= qs.len() {
+                t2.stop();
+                let _ = slint::quit_event_loop();
+                return;
+            }
+            let q = qs[s.next].clone();
+            with_app(|a| {
+                if !provider.is_empty() {
+                    a.cfg.provider = provider.clone();
+                }
+                a.mode_free();
+                a.new_chat();
+                let cid = a.chat_id;
+                a.send(Request { text: q.clone(), ..Default::default() }, Some(q), Some(cid));
+            });
+            s.waiting = true;
+            s.started = Instant::now();
+            return;
+        }
+        let (busy, text) = APP.with(|a| a.borrow().as_ref().map(|r| { let r = r.borrow(); (r.busy, r.shown_text.clone()) }).unwrap_or((true, String::new())));
+        if busy && s.started.elapsed() < Duration::from_secs(120) {
+            return;
+        }
+        let i = s.next;
+        let line = format!("##### Q{}: {}
+{}
+
+", i + 1, qs[i], text);
+        let _ = std::fs::OpenOptions::new().create(true).append(true).open(out.join("answers.txt")).and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
+        shot(&out, &format!("R{}_short.png", i + 1));
+        with_app(|a| a.toggle_more());
+        s.pause = true;
+        s.next += 1;
+        s.waiting = false;
+        let st3 = st.clone();
+        let o = out.clone();
+        Timer::single_shot(Duration::from_millis(900), move || {
+            shot(&o, &format!("R{}_more.png", i + 1));
+            st3.borrow_mut().pause = false;
+        });
+    });
+    std::mem::forget(timer);
 }
 
 fn main() {

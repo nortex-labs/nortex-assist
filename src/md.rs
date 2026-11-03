@@ -365,8 +365,9 @@ fn group(chars: &[char], i: usize) -> (String, usize) {
 
 fn script(body: &str, up: bool) -> String {
     let conv = |c: char| if up { sup_char(c) } else { sub_char(c) };
-    if body.chars().all(|c| conv(c).is_some()) {
-        body.chars().filter_map(conv).collect()
+    // a comma has no small form: x_{1,2} reads x₁,₂
+    if body.chars().all(|c| conv(c).is_some() || c == ',') && body.chars().any(|c| c != ',') {
+        body.chars().filter_map(|c| if c == ',' { Some(',') } else { conv(c) }).collect()
     } else if body.chars().count() == 1 {
         format!("{}{}", if up { "^" } else { "_" }, body)
     } else {
@@ -522,6 +523,7 @@ mod tests {
     fn latex_reads_well() {
         assert_eq!(latex("\\frac{a+b}{2}"), "(a+b)/2");
         assert_eq!(latex("x^2 + y_1"), "x² + y₁");
+        assert_eq!(latex("x_{1,2}"), "x₁,₂");
         assert_eq!(latex("\\sqrt{x^2+1}"), "√(x²+1)");
         assert_eq!(latex("\\alpha \\cdot \\pi \\le 3"), "α · π ≤ 3");
         assert_eq!(latex("e^{i\\pi} + 1 = 0"), "eⁱπ + 1 = 0".replace("ⁱπ", "^(iπ)"));
