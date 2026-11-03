@@ -2127,6 +2127,9 @@ fn run_demo_real(out: std::path::PathBuf, qs: Vec<String>) {
                 if !provider.is_empty() {
                     a.cfg.provider = provider.clone();
                 }
+                if s.next == 0 {
+                    log_err(&format!("demo: provider={} has_key={}", a.cfg.provider, a.cfg.has_key()));
+                }
                 a.mode_free();
                 a.new_chat();
                 let cid = a.chat_id;
@@ -2237,7 +2240,15 @@ fn main() {
             return;
         }
     };
-    let first_run = !cfg.has_key();
+    #[cfg(debug_assertions)]
+    if let Ok(p) = std::env::var("NORTEX_PROVIDER") {
+        cfg.provider = p; // test runs: pick the provider without touching the saved settings
+    }
+    #[cfg(debug_assertions)]
+    let open_settings = std::env::var("NORTEX_OPEN_SETTINGS").is_ok();
+    #[cfg(not(debug_assertions))]
+    let open_settings = false;
+    let first_run = !cfg.has_key() || open_settings;
     let cfg_auto_off = cfg.no_update_check;
     let app = Rc::new(RefCell::new(App {
         ui: ui.as_weak(),

@@ -3,6 +3,8 @@
 
 /// Written by the model between the short answer and the details (see `llm::TWO_LEVEL_NOTE`).
 pub const MORE_MARK: &str = "<<<MORE>>>";
+/// Details shorter than this (one line) are not worth a button.
+const TINY_DETAIL: usize = 60;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -30,7 +32,9 @@ pub fn split_levels(text: &str) -> (String, Option<String>) {
         Some(i) => {
             let short = text[..i].trim().to_string();
             let detail = text[i + MORE_MARK.len()..].trim().to_string();
-            (short, if detail.is_empty() { None } else { Some(detail) })
+            // a one-line remark adds nothing the short answer lacks: no "show more" for it
+            let tiny = detail.chars().count() < TINY_DETAIL && !detail.contains('\n');
+            (short, if detail.is_empty() || tiny { None } else { Some(detail) })
         }
         None => {
             // while streaming the marker may be half written: do not show "<<<MO" to the user
@@ -500,13 +504,26 @@ mod tests {
 
     #[test]
     fn splits_two_levels() {
-        let (s, d) = split_levels("Ответ: 5\n<<<MORE>>>\nПотому что 2+3.");
+        let (s, d) = split_levels("Ответ: 5\n<<<MORE>>>\nПотому что 2+3.\nВторая строка.");
         assert_eq!(s, "Ответ: 5");
-        assert_eq!(d.as_deref(), Some("Потому что 2+3."));
+        assert_eq!(d.as_deref(), Some("Потому что 2+3.\nВторая строка."));
         let (s, d) = split_levels("Ответ: 5\n<<<MO");
         assert_eq!(s, "Ответ: 5");
         assert!(d.is_none());
-        assert_eq!(without_mark("A\n<<<MORE>>>\nB"), "A\n\nB");
+        assert_eq!(without_mark("A\n<<<MORE>>>\nB\nC"), "A\n\nB\nC");
+    }
+
+    #[test]
+    fn tiny_details_get_no_button() {
+        let (s, d) = split_levels("Paris
+<<<MORE>>>
+Paris is the capital of France.");
+        assert_eq!(s, "Paris");
+        assert!(d.is_none());
+        let long = "Хотя Сидней и Мельбурн самые крупные города, столицей является Канберра, построенная как компромисс.";
+        assert!(split_levels(&format!("B
+<<<MORE>>>
+{long}")).1.is_some());
     }
 
     #[test]
