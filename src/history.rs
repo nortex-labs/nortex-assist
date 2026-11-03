@@ -30,7 +30,7 @@ fn path() -> PathBuf {
 pub fn describe(req: &Request) -> String {
     let n = req.images.len();
     let mut q = if n > 0 {
-        format!("[скриншот{}]", if n > 1 { format!(" x{n}") } else { String::new() })
+        if n > 1 { crate::i18n::trf("[скриншот x{n}]", &[("n", &n.to_string())]) } else { crate::i18n::tr("[скриншот]") }
     } else {
         req.text.clone()
     };
@@ -40,7 +40,12 @@ pub fn describe(req: &Request) -> String {
     }
     if !req.files.is_empty() {
         let names: Vec<&str> = req.files.iter().take(3).map(|f| f.name.as_str()).collect();
-        q.push_str(&format!(" [файлы: {}{}]", names.join(", "), if req.files.len() > 3 { format!(" и ещё {}", req.files.len() - 3) } else { String::new() }));
+        let list = names.join(", ");
+        q.push_str(&if req.files.len() > 3 {
+            crate::i18n::trf(" [файлы: {names} и ещё {n}]", &[("names", &list), ("n", &(req.files.len() - 3).to_string())])
+        } else {
+            crate::i18n::trf(" [файлы: {names}]", &[("names", &list)])
+        });
     }
     q
 }

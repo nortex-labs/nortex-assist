@@ -43,18 +43,18 @@ fn read_text(path: &Path) -> Result<String, String> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
     if BINARY_EXT.contains(&ext.as_str()) {
         return Err(if ["png", "jpg", "jpeg", "gif", "webp", "bmp"].contains(&ext.as_str()) {
-            "картинка (вставьте её через Ctrl+V)".into()
+            crate::i18n::tr("картинка (вставьте её через Ctrl+V)")
         } else {
-            "не текстовый файл".into()
+            crate::i18n::tr("не текстовый файл")
         });
     }
-    let meta = std::fs::metadata(path).map_err(|_| "не открылся".to_string())?;
+    let meta = std::fs::metadata(path).map_err(|_| crate::i18n::tr("не открылся"))?;
     if meta.len() > MAX_BYTES_PER_FILE {
-        return Err("слишком большой".into());
+        return Err(crate::i18n::tr("слишком большой"));
     }
-    let bytes = std::fs::read(path).map_err(|_| "не открылся".to_string())?;
+    let bytes = std::fs::read(path).map_err(|_| crate::i18n::tr("не открылся"))?;
     if bytes.iter().take(8192).any(|&b| b == 0) {
-        return Err("не текстовый файл".into());
+        return Err(crate::i18n::tr("не текстовый файл"));
     }
     Ok(decode(&bytes))
 }
@@ -93,7 +93,7 @@ pub fn load(paths: &[PathBuf], already: &[Attachment]) -> Loaded {
                 jobs.push((f, format!("{base}/{rel}")));
             }
         } else {
-            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("файл").to_string();
+            let name = p.file_name().and_then(|n| n.to_str()).map(str::to_string).unwrap_or_else(|| crate::i18n::tr("файл"));
             jobs.push((p.clone(), name));
         }
     }
@@ -110,10 +110,10 @@ pub fn load(paths: &[PathBuf], already: &[Attachment]) -> Loaded {
             Ok(text) => {
                 let mut text: String = text;
                 if text.chars().count() > MAX_FILE_CHARS {
-                    text = text.chars().take(MAX_FILE_CHARS).collect::<String>() + "\n… (файл обрезан)";
+                    text = text.chars().take(MAX_FILE_CHARS).collect::<String>() + &crate::i18n::tr("\n… (файл обрезан)");
                 }
                 if text.trim().is_empty() {
-                    res.skipped.push(format!("{name}: пустой"));
+                    res.skipped.push(crate::i18n::trf("{name}: {why}", &[("name", &name), ("why", &crate::i18n::tr("пустой"))]));
                     continue;
                 }
                 total += text.chars().count();
@@ -122,7 +122,7 @@ pub fn load(paths: &[PathBuf], already: &[Attachment]) -> Loaded {
             Err(why) => {
                 // a folder full of pictures and archives should not flood the notice
                 if res.skipped.len() < 3 {
-                    res.skipped.push(format!("{name}: {why}"));
+                    res.skipped.push(crate::i18n::trf("{name}: {why}", &[("name", &name), ("why", &why)]));
                 } else {
                     hidden += 1;
                 }
@@ -130,7 +130,7 @@ pub fn load(paths: &[PathBuf], already: &[Attachment]) -> Loaded {
         }
     }
     if hidden > 0 {
-        res.skipped.push(format!("ещё {hidden} не добавлено (лимит или не текст)"));
+        res.skipped.push(crate::i18n::trf("ещё {n} не добавлено (лимит или не текст)", &[("n", &hidden.to_string())]));
     }
     res
 }

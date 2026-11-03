@@ -75,10 +75,10 @@ fn check_newer_than(current: &str) -> Result<Option<Release>, String> {
         .set("accept", "application/vnd.github+json")
         .call();
     let body: Value = match resp {
-        Ok(r) => r.into_json().map_err(|e| format!("ответ GitHub не прочитан: {e}"))?,
+        Ok(r) => r.into_json().map_err(|e| crate::i18n::trf("ответ GitHub не прочитан: {e}", &[("e", &e.to_string())]))?,
         Err(ureq::Error::Status(404, _)) => return Ok(None),
-        Err(ureq::Error::Status(code, _)) => return Err(format!("GitHub ответил кодом {code}")),
-        Err(e) => return Err(format!("нет связи с GitHub ({e})")),
+        Err(ureq::Error::Status(code, _)) => return Err(crate::i18n::trf("GitHub ответил кодом {code}", &[("code", &code.to_string())])),
+        Err(e) => return Err(crate::i18n::trf("нет связи с GitHub ({e})", &[("e", &e.to_string())])),
     };
     let tag = body["tag_name"].as_str().unwrap_or_default();
     if !is_newer(tag, current) {
@@ -98,49 +98,49 @@ fn download(a: &Asset, to: &PathBuf) -> Result<(), String> {
         .get(&a.url)
         .set("user-agent", &format!("NortexAssist/{VERSION}"))
         .call()
-        .map_err(|e| format!("скачивание не удалось ({e})"))?;
+        .map_err(|e| crate::i18n::trf("скачивание не удалось ({e})", &[("e", &e.to_string())]))?;
     let mut data = Vec::new();
-    resp.into_reader().take(MAX_DOWNLOAD).read_to_end(&mut data).map_err(|e| format!("скачивание прервалось ({e})"))?;
+    resp.into_reader().take(MAX_DOWNLOAD).read_to_end(&mut data).map_err(|e| crate::i18n::trf("скачивание прервалось ({e})", &[("e", &e.to_string())]))?;
     if let Some(expected) = &a.sha256 {
         let got: String = Sha256::digest(&data).iter().map(|b| format!("{b:02x}")).collect();
         if &got != expected {
-            return Err("скачанный файл повреждён (не совпала контрольная сумма)".into());
+            return Err(crate::i18n::tr("скачанный файл повреждён (не совпала контрольная сумма)"));
         }
     }
-    std::fs::write(to, &data).map_err(|e| format!("не удалось сохранить файл ({e})"))
+    std::fs::write(to, &data).map_err(|e| crate::i18n::trf("не удалось сохранить файл ({e})", &[("e", &e.to_string())]))
 }
 
 /// Downloads the new version and starts it. On Ok the caller quits right away.
 pub fn apply(rel: &Release) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     if is_installed() {
-        let a = rel.installer.as_ref().ok_or("в выпуске нет установщика")?;
+        let a = rel.installer.as_ref().ok_or_else(|| crate::i18n::tr("в выпуске нет установщика"))?;
         let setup = std::env::temp_dir().join(format!("{INSTALLER_PREFIX}{}.exe", rel.version));
         download(a, &setup)?;
         // the installer closes this app itself and starts the new version when it is done
         std::process::Command::new(&setup)
             .args(["/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART"])
             .spawn()
-            .map_err(|e| format!("установщик не запустился ({e})"))?;
+            .map_err(|e| crate::i18n::trf("установщик не запустился ({e})", &[("e", &e.to_string())]))?;
         return Ok(());
     }
-    let a = rel.portable.as_ref().ok_or("в выпуске нет портативной версии")?;
+    let a = rel.portable.as_ref().ok_or_else(|| crate::i18n::tr("в выпуске нет портативной версии"))?;
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let fresh = exe.with_extension("new");
     download(a, &fresh)?;
     // a running exe cannot be overwritten but can be renamed; the old copy is removed on the next start
     let old = exe.with_extension("old");
     let _ = std::fs::remove_file(&old);
-    std::fs::rename(&exe, &old).map_err(|e| format!("нет доступа к папке программы ({e})"))?;
+    std::fs::rename(&exe, &old).map_err(|e| crate::i18n::trf("нет доступа к папке программы ({e})", &[("e", &e.to_string())]))?;
     if let Err(e) = std::fs::rename(&fresh, &exe) {
         let _ = std::fs::rename(&old, &exe);
-        return Err(format!("не удалось заменить файл ({e})"));
+        return Err(crate::i18n::trf("не удалось заменить файл ({e})", &[("e", &e.to_string())]));
     }
     std::process::Command::new(&exe)
         .arg(AFTER_UPDATE_ARG)
         .creation_flags(0x0000_0008) // DETACHED_PROCESS
         .spawn()
-        .map_err(|e| format!("новая версия не запустилась ({e})"))?;
+        .map_err(|e| crate::i18n::trf("новая версия не запустилась ({e})", &[("e", &e.to_string())]))?;
     Ok(())
 }
 

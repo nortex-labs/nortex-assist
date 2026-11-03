@@ -5,6 +5,7 @@ mod clip;
 mod config;
 mod crypto;
 mod history;
+mod i18n;
 mod llm;
 mod logging;
 mod md;
@@ -140,6 +141,8 @@ struct App {
 }
 
 thread_local! {
+    /// tray menu entries, kept to retitle them when the language changes
+    static TRAY_ITEMS: RefCell<Option<(MenuItem, MenuItem, MenuItem)>> = const { RefCell::new(None) };
     static APP: RefCell<Option<Rc<RefCell<App>>>> = const { RefCell::new(None) };
 }
 
@@ -169,6 +172,9 @@ fn record_turn(chat: &mut Vec<Turn>, q: &str, a: &str) {
 
 /// "1 файл", "3 файла", "12 файлов"
 fn files_word(n: usize) -> String {
+    if i18n::is_en() {
+        return format!("{n} {}", if n == 1 { "file" } else { "files" });
+    }
     let word = match (n % 10, n % 100) {
         (_, 11..=14) => "файлов",
         (1, _) => "файл",
@@ -228,9 +234,9 @@ fn when_text(ms: i64) -> String {
     let day = d.date_naive();
     let hm = d.format("%H:%M");
     if day == today {
-        format!("сегодня, {hm}")
+        i18n::trf("сегодня, {hm}", &[("hm", &hm.to_string())])
     } else if Some(day) == today.pred_opt() {
-        format!("вчера, {hm}")
+        i18n::trf("вчера, {hm}", &[("hm", &hm.to_string())])
     } else if day.year() == today.year() {
         d.format("%d.%m, %H:%M").to_string()
     } else {
@@ -692,6 +698,34 @@ impl App {
         }
     }
 
+    /// The small RU / EN button: switches the interface language at once and remembers it.
+    fn toggle_language(&mut self) {
+        let en = !self.cfg.is_en();
+        self.cfg.lang = if en { "en".into() } else { "ru".into() };
+        i18n::set_en(en);
+        let _ = slint::select_bundled_translation(if en { "en-US" } else { "" });
+        let ui = self.ui();
+        ui.set_lang_en(en);
+        ui.set_version_text(i18n::trf("Версия {v}", &[("v", update::VERSION)]).into());
+        self.set_hotkey_models();
+        self.update_provider_ui();
+        if self.hist_open {
+            self.refresh_history();
+        }
+        TRAY_ITEMS.with(|t| {
+            if let Some((open, settings, quit)) = t.borrow().as_ref() {
+                open.set_text(i18n::tr("Открыть"));
+                settings.set_text(i18n::tr("Настройки"));
+                quit.set_text(i18n::tr("Выход"));
+            }
+        });
+        // an idle window shows the hint of the free question in the new language
+        if matches!(self.composer, Some(Composer::Free)) {
+            self.mode_free();
+        }
+        config::save(&self.store, &self.cfg);
+    }
+
     fn toggle_select(&mut self) {
         self.select_mode = !self.select_mode;
         let t = self.shown_text.clone();
@@ -845,7 +879,7 @@ impl App {
         // one chip per folder, one chip per single file
         let mut left = loaded.files;
         for p in &paths {
-            let base = p.file_name().and_then(|n| n.to_str()).unwrap_or("файл").to_string();
+            let base = p.file_name().and_then(|n| n.to_str()).map(str::to_string).unwrap_or_else(|| i18n::tr("файл"));
             if p.is_dir() {
                 let prefix = format!("{base}/");
                 let (mine, rest): (Vec<_>, Vec<_>) = left.into_iter().partition(|f| f.name.starts_with(&prefix));
@@ -860,7 +894,7 @@ impl App {
         }
         self.refresh_files();
         if !loaded.skipped.is_empty() {
-            let note = format!("Пропущено: {}", loaded.skipped.join("; "));
+            let note = i18n::trf("Пропущено: {list}", &[("list", &loaded.skipped.join("; "))]);
             self.toast(&note);
         }
     }
@@ -897,7 +931,7 @@ impl App {
         let follow_up = follow_up_now;
         self.set_nav(true);
         if follow_up {
-            ui.set_composer_placeholder("Уточни ответ или прикрепи файл".into());
+            ui.set_composer_placeholder(i18n::tr("Уточни ответ или прикрепи файл").into());
             ui.set_composer_text("".into());
             self.composer = Some(Composer::FollowUp);
             ui.set_composer_on(true);
@@ -1018,7 +1052,7 @@ impl App {
                 let files = self.take_files();
                 self.new_chat();
                 let cid = self.chat_id;
-                let q = if extra.is_empty() { "[скриншот]".to_string() } else { extra.clone() };
+                let q = if extra.is_empty() { i18n::tr("[скриншот]") } else { extra.clone() };
                 self.send(Request { extra, images: all, files, ..Default::default() }, Some(q), Some(cid));
             }
         }
@@ -1030,10 +1064,10 @@ impl App {
         let history = self.chat.clone();
         let cid = self.chat_id;
         if imgs.is_empty() {
-            let rq = if q.is_empty() { "[файлы]".to_string() } else { q.clone() };
+            let rq = if q.is_empty() { i18n::tr("[файлы]") } else { q.clone() };
             self.send(Request { text: q, history, files, ..Default::default() }, Some(rq), Some(cid));
         } else {
-            let rq = if q.is_empty() { "[скриншот]".to_string() } else { q.clone() };
+            let rq = if q.is_empty() { i18n::tr("[скриншот]") } else { q.clone() };
             self.send(Request { extra: q, images: imgs, history, files, ..Default::default() }, Some(rq), Some(cid));
         }
     }
@@ -1041,7 +1075,7 @@ impl App {
     fn send(&mut self, req: Request, record_q: Option<String>, chat: Option<u64>) {
         self.req_id += 1;
         let id = self.req_id;
-        self.show_status("Думаю…");
+        self.show_status(&i18n::tr("Думаю…"));
         self.ui().set_question_text(question_line(&history::describe(&req)).into());
         self.ui().set_thinking(true); // dots until the first words arrive
         self.fit_overlay();
@@ -1082,7 +1116,7 @@ impl App {
         self.set_busy(false);
         let partial = std::mem::take(&mut self.streaming);
         let Some((req, record_q, chat)) = self.in_flight.take() else { return self.render() };
-        let text = if partial.trim().is_empty() { "Запрос остановлен.".to_string() } else { format!("{}\n\n[остановлено]", partial.trim()) };
+        let text = if partial.trim().is_empty() { i18n::tr("Запрос остановлен.") } else { format!("{}{}", partial.trim(), i18n::tr("\n\n[остановлено]")) };
         let question = history::describe(&req);
         // marked as an error so that "retry" simply resends it instead of treating it as a rejected answer
         self.push_answer(Answer { text, req: Some(req), chat, is_error: true, record_q, question });
@@ -1108,10 +1142,10 @@ impl App {
                 (answer, false)
             }
             Err(e) => {
-                let mut text = format!("Ошибка: {e}");
+                let mut text = i18n::trf("Ошибка: {e}", &[("e", &e.to_string())]);
                 if self.overlay_view {
                     // the overlay cannot be clicked, so point at the hotkey that resends the request
-                    text.push_str(&format!("\n\n{} — повторить запрос", self.cfg.hotkeys().retry));
+                    text.push_str(&i18n::trf("\n\n{key} — повторить запрос", &[("key", &self.cfg.hotkeys().retry)]));
                 }
                 (text, true)
             }
@@ -1136,7 +1170,7 @@ impl App {
         let has_request = self.answers.last().is_some_and(|a| a.req.is_some());
         let overlay = self.cfg.overlay_mode && !(self.visible && !self.overlay_view);
         if !has_request {
-            self.show_status("Нет запроса для повтора. Сначала задай вопрос или сделай снимок.");
+            self.show_status(&i18n::tr("Нет запроса для повтора. Сначала задай вопрос или сделай снимок."));
         } else {
             self.idx = self.answers.len() - 1;
             self.retry();
@@ -1241,9 +1275,9 @@ impl App {
             self.refresh_history();
         }
         if self.ui().get_settings_open() {
-            self.ui().set_saved_text("История очищена".into());
+            self.ui().set_saved_text(i18n::tr("История очищена").into());
         } else {
-            self.toast("История очищена");
+            self.toast(&i18n::tr("История очищена"));
         }
     }
 
@@ -1297,18 +1331,18 @@ impl App {
     }
 
     fn no_key_hint(&self) -> String {
-        if self.cfg.is_groq() { "Добавь ключ Groq API в настройках".into() } else { "Добавь ключ Gemini API в настройках".into() }
+        i18n::tr(if self.cfg.is_groq() { "Добавь ключ Groq API в настройках" } else { "Добавь ключ Gemini API в настройках" })
     }
 
     fn mode_free(&mut self) {
         self.new_chat();
-        let label = if self.cfg.has_key() { "Задай любой вопрос".to_string() } else { self.no_key_hint() };
-        if self.show_composer(&label, Composer::Free, "Задай вопрос", false) {
+        let label = if self.cfg.has_key() { i18n::tr("Задай любой вопрос") } else { self.no_key_hint() };
+        if self.show_composer(&label, Composer::Free, &i18n::tr("Задай вопрос"), false) {
             let k = self.cfg.hotkeys();
             let hint = if self.cfg.has_key() {
-                format!("{} — вопрос по выделенному тексту\n{} — скриншот\n{} — повторить последний запрос", k.selection, k.screenshot, k.retry)
+                i18n::trf("{sel} — вопрос по выделенному тексту\n{shot} — скриншот\n{retry} — повторить последний запрос", &[("sel", &k.selection), ("shot", &k.screenshot), ("retry", &k.retry)])
             } else {
-                "Шестерёнка вверху справа открывает настройки.".to_string()
+                i18n::tr("Шестерёнка вверху справа открывает настройки.")
             };
             self.ui().set_hint_text(hint.into());
             self.show_window();
@@ -1318,7 +1352,7 @@ impl App {
     fn mode_selection(&mut self, text: String) {
         if self.cfg.overlay_mode {
             if text.is_empty() {
-                self.show_status("Не удалось скопировать выделение. Проверь, что приложение разрешает Ctrl+C.");
+                self.show_status(&i18n::tr("Не удалось скопировать выделение. Проверь, что приложение разрешает Ctrl+C."));
             } else {
                 self.new_chat();
                 let cid = self.chat_id;
@@ -1328,10 +1362,10 @@ impl App {
             return;
         }
         if text.is_empty() {
-            self.show_status("Не удалось скопировать текст. Проверь выделение и разрешение Ctrl+C.");
+            self.show_status(&i18n::tr("Не удалось скопировать текст. Проверь выделение и разрешение Ctrl+C."));
         } else {
             let preview: String = if text.chars().count() > 150 { text.chars().take(150).collect::<String>() + "…" } else { text.clone() };
-            if !self.show_composer(&format!("Выделено: {preview}"), Composer::Selection(text), "Напиши запрос", false) {
+            if !self.show_composer(&i18n::trf("Выделено: {preview}", &[("preview", &preview)]), Composer::Selection(text), &i18n::tr("Напиши запрос"), false) {
                 return;
             }
         }
@@ -1360,9 +1394,9 @@ impl App {
             Some(b64) => {
                 self.new_chat();
                 let cid = self.chat_id;
-                self.send(Request { images: vec![b64], ..Default::default() }, Some("[скриншот]".into()), Some(cid));
+                self.send(Request { images: vec![b64], ..Default::default() }, Some(i18n::tr("[скриншот]")), Some(cid));
             }
-            None => self.show_status("Снимок не удался."),
+            None => self.show_status(&i18n::tr("Снимок не удался.")),
         }
         self.show_overlay();
     }
@@ -1413,15 +1447,15 @@ impl App {
                 self.pending.push((b64, make_image(w, h, &rgba)));
                 self.refresh_thumbs();
                 let n = self.pending.len();
-                let label = if n == 1 { "Снимок экрана готов".to_string() } else { format!("Снимков экрана: {n}") };
-                if self.show_composer(&label, Composer::Shot, "Что сделать со снимком?", true) {
-                    let more = if n < MAX_SHOTS { format!("\n{} — добавить ещё снимок (до {MAX_SHOTS}).", self.cfg.hotkeys().screenshot) } else { String::new() };
-                    self.ui().set_hint_text(format!("Enter с пустым полем — модель решит задание со снимка.{more}").into());
+                let label = if n == 1 { i18n::tr("Снимок экрана готов") } else { i18n::trf("Снимков экрана: {n}", &[("n", &n.to_string())]) };
+                if self.show_composer(&label, Composer::Shot, &i18n::tr("Что сделать со снимком?"), true) {
+                    let more = if n < MAX_SHOTS { i18n::trf("\n{key} — добавить ещё снимок (до {max}).", &[("key", &self.cfg.hotkeys().screenshot), ("max", &MAX_SHOTS.to_string())]) } else { String::new() };
+                    self.ui().set_hint_text(i18n::trf("Enter с пустым полем — модель решит задание со снимка.{more}", &[("more", &more)]).into());
                     self.show_window();
                 }
             }
             None if self.cfg.shot_mode_index() != 2 => {
-                self.show_status("Снимок экрана не удался.");
+                self.show_status(&i18n::tr("Снимок экрана не удался."));
                 self.show_window();
             }
             None if was_visible => self.show_window(),
@@ -1435,7 +1469,7 @@ impl App {
             return;
         }
         let Some((x, y, w, h, px)) = cap else {
-            self.show_status("Снимок экрана не удался.");
+            self.show_status(&i18n::tr("Снимок экрана не удался."));
             self.show_window();
             return;
         };
@@ -1528,16 +1562,16 @@ impl App {
         let ui = self.ui();
         let groq = self.active_provider == 1;
         let saved = if groq { !self.cfg.groq_key.is_empty() } else { !self.cfg.gemini_key.is_empty() };
-        ui.set_api_key_label(if groq { "Ключ API Groq" } else { "Ключ API Gemini" }.into());
+        ui.set_api_key_label(i18n::tr(if groq { "Ключ API Groq" } else { "Ключ API Gemini" }).into());
         ui.set_api_key_placeholder(
-            if saved { "Ключ сохранён (введи новый, чтобы заменить)" } else if groq { "Вставь ключ Groq API" } else { "Вставь ключ Google AI Studio" }.into(),
+            i18n::tr(if saved { "Ключ сохранён (введи новый, чтобы заменить)" } else if groq { "Вставь ключ Groq API" } else { "Вставь ключ Google AI Studio" }).into(),
         );
-        ui.set_api_key_link_text(if groq { "Открыть Groq Console" } else { "Открыть Google AI Studio" }.into());
+        ui.set_api_key_link_text(i18n::tr(if groq { "Открыть Groq Console" } else { "Открыть Google AI Studio" }).into());
     }
 
     fn set_hotkey_models(&self) {
         let ui = self.ui();
-        ui.set_hotkey_labels(ModelRc::new(VecModel::from(HOTKEY_LABELS.iter().map(|s| (*s).into()).collect::<Vec<slint::SharedString>>())));
+        ui.set_hotkey_labels(ModelRc::new(VecModel::from(HOTKEY_LABELS.iter().map(|s| i18n::tr(s).into()).collect::<Vec<slint::SharedString>>())));
         let values: Vec<slint::SharedString> = (0..HOTKEY_LABELS.len()).map(|i| self.draft_hot.get(i).into()).collect();
         ui.set_hotkey_values(ModelRc::new(VecModel::from(values)));
     }
@@ -1581,7 +1615,7 @@ impl App {
         ui.set_custom_open(false);
         ui.set_theme_index(if self.cfg.dark() { 0 } else { 1 });
         ui.set_auto_update(!self.cfg.no_update_check);
-        ui.set_version_text(format!("Версия {}", update::VERSION).into());
+        ui.set_version_text(i18n::trf("Версия {v}", &[("v", update::VERSION)]).into());
         ui.set_update_status("".into());
         let prompt = if self.cfg.prompt.trim().is_empty() { llm::DEFAULT_PROMPT } else { self.cfg.prompt.as_str() };
         ui.set_prompt_text(prompt.into());
@@ -1661,7 +1695,7 @@ impl App {
         let prompt = ui.get_prompt_text().trim().to_string();
         let prompt = if prompt == llm::DEFAULT_PROMPT.trim() { String::new() } else { prompt };
         if !groq && model.is_empty() {
-            return fail("Введи ID своей модели Gemini");
+            return fail(&i18n::tr("Введи ID своей модели Gemini"));
         }
         let input = SettingsInput {
             provider: if groq { "groq" } else { "gemini" }.into(),
@@ -1707,7 +1741,7 @@ impl App {
         self.cfg.prompt = input.prompt.clone();
         if !config::save(&self.store, &self.cfg) {
             self.cfg = previous;
-            return fail("Не удалось сохранить настройки. Проверь доступ к папке данных.");
+            return fail(&i18n::tr("Не удалось сохранить настройки. Проверь доступ к папке данных."));
         }
         if let Err(e) = native::set_autostart(input.autostart) {
             log_err(&format!("autostart: {e}"));
@@ -1724,12 +1758,12 @@ impl App {
         let failed = self.register_hotkeys();
         if !failed.is_empty() {
             // the settings are saved anyway; say which keys did not work instead of keeping the panel open
-            let msg = format!("Клавиши заняты другой программой: {}. Поменяй их в настройках.", failed.join(", "));
+            let msg = i18n::trf("Клавиши заняты другой программой: {keys}. Поменяй их в настройках.", &[("keys", &failed.join(", "))]);
             ui.set_saved_text(msg.as_str().into());
             self.toast(&msg);
             return true;
         }
-        ui.set_saved_text("Сохранено".into());
+        ui.set_saved_text(i18n::tr("Сохранено").into());
         true
     }
 
@@ -1762,7 +1796,7 @@ impl App {
         self.key_check_id += 1;
         let id = self.key_check_id;
         ui.set_key_check_ok(true);
-        ui.set_key_check_text("Проверяю…".into());
+        ui.set_key_check_text(i18n::tr("Проверяю…").into());
         std::thread::spawn(move || {
             let res = llm::check_key(groq, &key, &model);
             let _ = slint::invoke_from_event_loop(move || {
@@ -1786,7 +1820,7 @@ impl App {
 
     fn update_found(&mut self, rel: update::Release) {
         let ui = self.ui();
-        ui.set_update_text(format!("Доступна новая версия {}", rel.version).into());
+        ui.set_update_text(i18n::trf("Доступна новая версия {v}", &[("v", &rel.version)]).into());
         ui.set_update_shown(!self.update_dismissed);
         self.update = Some(rel);
     }
@@ -1795,23 +1829,23 @@ impl App {
     fn check_updates(&mut self) {
         let ui = self.ui();
         if update::REPO.is_empty() {
-            ui.set_update_status("Обновления пока не настроены.".into());
+            ui.set_update_status(i18n::tr("Обновления пока не настроены.").into());
             return;
         }
-        ui.set_update_status("Проверяю…".into());
+        ui.set_update_status(i18n::tr("Проверяю…").into());
         std::thread::spawn(|| {
             let res = update::check();
             let _ = slint::invoke_from_event_loop(move || {
                 with_app(|a| {
                     let text = match res {
                         Ok(Some(rel)) => {
-                            let t = format!("Есть новая версия {}: нажми «Обновить» в полосе над ответом.", rel.version);
+                            let t = i18n::trf("Есть новая версия {v}: нажми «Обновить» в полосе над ответом.", &[("v", &rel.version)]);
                             a.update_dismissed = false;
                             a.update_found(rel);
                             t
                         }
-                        Ok(None) => "У тебя последняя версия.".to_string(),
-                        Err(e) => format!("Не удалось проверить: {e}."),
+                        Ok(None) => i18n::tr("У тебя последняя версия."),
+                        Err(e) => i18n::trf("Не удалось проверить: {e}.", &[("e", &e.to_string())]),
                     };
                     a.ui().set_update_status(text.into());
                 })
@@ -1832,7 +1866,7 @@ impl App {
         self.updating = true;
         let ui = self.ui();
         ui.set_update_busy(true);
-        ui.set_update_text(format!("Скачиваю версию {}…", rel.version).into());
+        ui.set_update_text(i18n::trf("Скачиваю версию {v}…", &[("v", &rel.version)]).into());
         std::thread::spawn(move || {
             let res = update::apply(&rel);
             let _ = slint::invoke_from_event_loop(move || match res {
@@ -1844,7 +1878,7 @@ impl App {
                     a.updating = false;
                     let ui = a.ui();
                     ui.set_update_busy(false);
-                    ui.set_update_text(format!("Обновление не удалось: {e}").into());
+                    ui.set_update_text(i18n::trf("Обновление не удалось: {e}", &[("e", &e.to_string())]).into());
                 }),
             });
         });
@@ -1988,7 +2022,18 @@ print((4 + math.sqrt(d)) / 2)
         let o = o.clone();
         move || shot(&o, "4_settings.png")
     });
-    Timer::single_shot(Duration::from_millis(11200), || {
+    Timer::single_shot(Duration::from_millis(11000), || with_app(|a| a.toggle_language()));
+    Timer::single_shot(Duration::from_millis(12300), {
+        let o = o.clone();
+        move || shot(&o, "7_en_settings.png")
+    });
+    Timer::single_shot(Duration::from_millis(12500), || with_app(|a| a.toggle_settings()));
+    Timer::single_shot(Duration::from_millis(12700), || with_app(|a| a.mode_free()));
+    Timer::single_shot(Duration::from_millis(13800), {
+        let o = o.clone();
+        move || shot(&o, "8_en_free.png")
+    });
+    Timer::single_shot(Duration::from_millis(14200), || {
         let _ = slint::quit_event_loop();
     });
 }
@@ -2017,6 +2062,7 @@ fn main() {
     };
     #[allow(unused_mut)]
     let mut cfg = config::load(&store);
+    i18n::set_en(cfg.is_en());
     #[cfg(debug_assertions)]
     {
         if let Ok(k) = std::env::var("NORTEX_GEMINI_KEY") {
@@ -2042,6 +2088,9 @@ fn main() {
         .expect("select winit backend");
 
     let ui = MainWindow::new().expect("create window");
+    // English texts come from the bundled .po file; "" selects the Russian source texts
+    let _ = slint::select_bundled_translation(if cfg.is_en() { "en-US" } else { "" });
+    ui.set_lang_en(cfg.is_en());
     // files and folders dragged from Explorer into the window are attached like the paperclip ones
     ui.window().on_winit_window_event(|_, event| {
         if let slint::winit_030::winit::event::WindowEvent::DroppedFile(path) = event {
@@ -2151,6 +2200,7 @@ fn main() {
     });
     ui.on_toggle_more(|| with_app(|a| a.toggle_more()));
     ui.on_toggle_select(|| with_app(|a| a.toggle_select()));
+    ui.on_toggle_lang(|| with_app(|a| a.toggle_language()));
     ui.on_copy_code(|t| with_app(|a| a.copy_code(&t)));
     ui.on_uninstall_ask(|| with_app(|a| a.uninstall_ask()));
     ui.on_uninstall_cancel(|| with_app(|a| a.uninstall_cancel()));
@@ -2233,9 +2283,10 @@ fn main() {
         log_err(&format!("hotkeys not registered: {}", failed.join(", ")));
     }
     // ---- tray icon (the app has no taskbar button) ----
-    let open_item = MenuItem::new("Открыть", true, None);
-    let settings_item = MenuItem::new("Настройки", true, None);
-    let quit_item = MenuItem::new("Выход", true, None);
+    let open_item = MenuItem::new(i18n::tr("Открыть"), true, None);
+    let settings_item = MenuItem::new(i18n::tr("Настройки"), true, None);
+    let quit_item = MenuItem::new(i18n::tr("Выход"), true, None);
+    TRAY_ITEMS.with(|t| *t.borrow_mut() = Some((open_item.clone(), settings_item.clone(), quit_item.clone())));
     let menu = Menu::new();
     let _ = menu.append_items(&[&open_item, &settings_item, &PredefinedMenuItem::separator(), &quit_item]);
     let tray_image = image::load_from_memory(include_bytes!("../ui/icon.png"))

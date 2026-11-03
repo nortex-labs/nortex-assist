@@ -77,6 +77,11 @@ Answer in two levels:
 - If the short answer already says everything (a fact, a translation, a one-word reply), do not write <<<MORE>>> at all.
 - Never mention these levels or the marker in the text.";
 
+/// Used when the interface language is English: the answers are in English whatever the question's language.
+const ENGLISH_NOTE: &str = "
+
+Language rule (overrides any earlier language instruction): always write the answer in English, even if the question or the text in an image is in another language.";
+
 /// The user's own prompt wins everywhere (overlay too); otherwise the overlay keeps its short one.
 fn system_prompt(cfg: &Config, simple: bool) -> String {
     let custom = cfg.prompt.trim();
@@ -87,10 +92,11 @@ fn system_prompt(cfg: &Config, simple: bool) -> String {
     } else {
         PROMPT
     };
+    let lang = if crate::i18n::is_en() { ENGLISH_NOTE } else { "" };
     if simple {
-        return base.to_string();
+        return format!("{base}{lang}");
     }
-    let mut p = format!("{base}{FORMAT_NOTE}");
+    let mut p = format!("{base}{FORMAT_NOTE}{lang}");
     if cfg.two_level_on() {
         p.push_str(TWO_LEVEL_NOTE);
     }
@@ -168,7 +174,7 @@ pub fn sanitize(r: &Request) -> Result<Request, String> {
         rejected: r.rejected.iter().skip(skip(r.rejected.len(), 3)).map(|t| take_chars(t, 12000)).collect(),
     };
     if out.text.trim().is_empty() && out.images.is_empty() && out.files.is_empty() && out.extra.trim().is_empty() {
-        return Err("Пустой запрос".into());
+        return Err(crate::i18n::tr("Пустой запрос"));
     }
     Ok(out)
 }
@@ -225,18 +231,18 @@ fn re_is(pattern: &str, s: &str) -> bool {
 
 pub fn explain_error(groq: bool, msg: &str) -> String {
     if groq {
-        if re_is(r"401|invalid_api_key|invalid api key|authentication|unauthorized", msg) { return "Неверный или заблокированный API-ключ Groq.".into(); }
-        if re_is(r"429|rate[_ ]limit|quota|too many requests", msg) { return "Лимит запросов Groq. Подожди немного и повтори.".into(); }
-        if re_is(r"model.*(not found|does not exist|decommissioned)|unknown model", msg) { return "Модель Qwen 3.8 27B сейчас недоступна в Groq.".into(); }
-        if re_is(r"502|503|504|overload|temporarily unavailable", msg) { return "Groq временно перегружен. Повтори позже.".into(); }
-        if re_is(r"timeout|aborted", msg) { return "Groq не ответил вовремя.".into(); }
-        if re_is(r"fetch failed|ERR_INTERNET|ERR_NAME|ERR_CONNECTION|ERR_NETWORK|ERR_PROXY", msg) { return "Нет связи с Groq.".into(); }
+        if re_is(r"401|invalid_api_key|invalid api key|authentication|unauthorized", msg) { return crate::i18n::tr("Неверный или заблокированный API-ключ Groq."); }
+        if re_is(r"429|rate[_ ]limit|quota|too many requests", msg) { return crate::i18n::tr("Лимит запросов Groq. Подожди немного и повтори."); }
+        if re_is(r"model.*(not found|does not exist|decommissioned)|unknown model", msg) { return crate::i18n::tr("Модель Qwen 3.8 27B сейчас недоступна в Groq."); }
+        if re_is(r"502|503|504|overload|temporarily unavailable", msg) { return crate::i18n::tr("Groq временно перегружен. Повтори позже."); }
+        if re_is(r"timeout|aborted", msg) { return crate::i18n::tr("Groq не ответил вовремя."); }
+        if re_is(r"fetch failed|ERR_INTERNET|ERR_NAME|ERR_CONNECTION|ERR_NETWORK|ERR_PROXY", msg) { return crate::i18n::tr("Нет связи с Groq."); }
     } else {
-        if re_is(r"API key not valid|API_KEY_INVALID|PERMISSION_DENIED|permission", msg) { return "Неверный или заблокированный API-ключ.".into(); }
-        if re_is(r"\b429\b|quota|RESOURCE_EXHAUSTED|rate limit", msg) { return "Лимит Gemini. Подожди минуту.".into(); }
-        if re_is(r"503|overload|high demand|unavailable", msg) { return "Gemini перегружен. Повтори позже.".into(); }
-        if re_is(r"timeout|aborted", msg) { return "Gemini не ответил вовремя.".into(); }
-        if re_is(r"fetch failed|ERR_INTERNET|ERR_NAME|ERR_CONNECTION|ERR_NETWORK|ERR_PROXY", msg) { return "Нет связи с Gemini.".into(); }
+        if re_is(r"API key not valid|API_KEY_INVALID|PERMISSION_DENIED|permission", msg) { return crate::i18n::tr("Неверный или заблокированный API-ключ."); }
+        if re_is(r"\b429\b|quota|RESOURCE_EXHAUSTED|rate limit", msg) { return crate::i18n::tr("Лимит Gemini. Подожди минуту."); }
+        if re_is(r"503|overload|high demand|unavailable", msg) { return crate::i18n::tr("Gemini перегружен. Повтори позже."); }
+        if re_is(r"timeout|aborted", msg) { return crate::i18n::tr("Gemini не ответил вовремя."); }
+        if re_is(r"fetch failed|ERR_INTERNET|ERR_NAME|ERR_CONNECTION|ERR_NETWORK|ERR_PROXY", msg) { return crate::i18n::tr("Нет связи с Gemini."); }
     }
     msg.to_string()
 }
@@ -258,7 +264,9 @@ fn transport_error(e: ureq::Error) -> String {
     }
 }
 
-const CANCELLED: &str = "Запрос остановлен.";
+fn cancelled() -> String {
+    crate::i18n::tr("Запрос остановлен.")
+}
 
 /// Reads an SSE body line by line, calling `f` with the JSON of every `data:` line.
 /// Stops early once `cancel` reports that nobody waits for this answer any more.
@@ -266,7 +274,7 @@ fn read_sse(resp: ureq::Response, cancel: &dyn Fn() -> bool, mut f: impl FnMut(&
     let reader = BufReader::new(resp.into_reader());
     for line in reader.lines() {
         if cancel() {
-            return Err(CANCELLED.into());
+            return Err(cancelled());
         }
         let line = line.map_err(|e| format!("fetch failed: {e}"))?;
         let line = line.trim();
@@ -310,7 +318,7 @@ pub fn ask(cfg: &Config, req: &Request, on_chunk: &dyn Fn(&str), cancel: &dyn Fn
 pub fn check_key(groq: bool, key: &str, model: &str) -> Result<String, String> {
     let key = key.trim();
     if key.is_empty() {
-        return Err("Ключ не введён.".into());
+        return Err(crate::i18n::tr("Ключ не введён."));
     }
     let timeout = Duration::from_secs(15);
     if groq {
@@ -319,22 +327,22 @@ pub fn check_key(groq: bool, key: &str, model: &str) -> Result<String, String> {
             .timeout(timeout)
             .call()
             .map_err(|e| explain_error(true, &transport_error(e)))?;
-        let list: Value = resp.into_json().map_err(|e| format!("Непонятный ответ Groq: {e}"))?;
+        let list: Value = resp.into_json().map_err(|e| crate::i18n::trf("Непонятный ответ Groq: {e}", &[("e", &e.to_string())]))?;
         let has_model = list["data"].as_array().is_some_and(|a| a.iter().any(|m| m["id"].as_str() == Some(GROQ_MODEL)));
         if has_model {
-            Ok("Ключ работает".into())
+            Ok(crate::i18n::tr("Ключ работает"))
         } else {
-            Err(format!("Ключ работает, но модель {GROQ_MODEL} сейчас недоступна"))
+            Err(crate::i18n::trf("Ключ работает, но модель {m} сейчас недоступна", &[("m", GROQ_MODEL)]))
         }
     } else {
         let model = if model.trim().is_empty() { DEFAULT_MODEL } else { model.trim() };
         if !Regex::new(r"(?i)^gemini-[a-z0-9.\-]+$").unwrap().is_match(model) {
-            return Err("Недопустимое имя модели".into());
+            return Err(crate::i18n::tr("Недопустимое имя модели"));
         }
         let url = format!("{}/v1beta/models/{model}", origin("NORTEX_GEMINI_ORIGIN", GEMINI_ORIGIN));
         match ureq::get(&url).set("x-goog-api-key", key).timeout(timeout).call() {
-            Ok(_) => Ok(format!("Ключ работает, модель {model} доступна")),
-            Err(ureq::Error::Status(404, _)) => Err(format!("Ключ работает, но модель {model} не найдена")),
+            Ok(_) => Ok(crate::i18n::trf("Ключ работает, модель {m} доступна", &[("m", model)])),
+            Err(ureq::Error::Status(404, _)) => Err(crate::i18n::trf("Ключ работает, но модель {m} не найдена", &[("m", model)])),
             Err(e) => Err(explain_error(false, &transport_error(e))),
         }
     }
@@ -346,11 +354,11 @@ fn timeout_for(deliberate: bool, simple: bool) -> Duration {
 
 fn gemini_once(cfg: &Config, r: &Request, on_chunk: &dyn Fn(&str), cancel: &dyn Fn() -> bool) -> Result<String, String> {
     if cfg.gemini_key.is_empty() {
-        return Err("API-ключ не задан. Открой настройки.".into());
+        return Err(crate::i18n::tr("API-ключ не задан. Открой настройки."));
     }
     let model = if cfg.model.trim().is_empty() { DEFAULT_MODEL } else { cfg.model.trim() };
     if !Regex::new(r"(?i)^gemini-[a-z0-9.\-]+$").unwrap().is_match(model) {
-        return Err("Недопустимое имя модели".into());
+        return Err(crate::i18n::tr("Недопустимое имя модели"));
     }
     let detailed = wants_detail(cfg, r);
     let simple = cfg.overlay_mode && !detailed;
@@ -417,8 +425,8 @@ fn gemini_once(cfg: &Config, r: &Request, on_chunk: &dyn Fn(&str), cancel: &dyn 
     })?;
     let mut out = out.trim().to_string();
     if out.is_empty() {
-        let why = if !blocked.is_empty() { blocked } else if !reason.is_empty() { reason } else { "нет вариантов".into() };
-        return Err(format!("Пустой ответ ({why})"));
+        let why = if !blocked.is_empty() { blocked } else if !reason.is_empty() { reason } else { crate::i18n::tr("нет вариантов") };
+        return Err(crate::i18n::trf("Пустой ответ ({why})", &[("why", &why)]));
     }
     // Cut off by the token limit: mark it so a stump is not mistaken for a full answer.
     if reason == "MAX_TOKENS" {
@@ -429,10 +437,10 @@ fn gemini_once(cfg: &Config, r: &Request, on_chunk: &dyn Fn(&str), cancel: &dyn 
 
 fn groq_once(cfg: &Config, r: &Request, on_chunk: &dyn Fn(&str), cancel: &dyn Fn() -> bool) -> Result<String, String> {
     if cfg.groq_key.is_empty() {
-        return Err("API-ключ Groq не задан. Открой настройки.".into());
+        return Err(crate::i18n::tr("API-ключ Groq не задан. Открой настройки."));
     }
     if r.images.len() > 3 {
-        return Err("Groq принимает не более трёх изображений за запрос.".into());
+        return Err(crate::i18n::tr("Groq принимает не более трёх изображений за запрос."));
     }
     let detailed = wants_detail(cfg, r);
     let simple = cfg.overlay_mode && !detailed;
@@ -484,7 +492,7 @@ fn groq_once(cfg: &Config, r: &Request, on_chunk: &dyn Fn(&str), cancel: &dyn Fn
         }
         let Ok(j) = serde_json::from_str::<Value>(data) else { return Ok(()) };
         if let Some(err) = j.get("error") {
-            return Err(err["message"].as_str().unwrap_or("Ошибка потока Groq").to_string());
+            return Err(err["message"].as_str().map(str::to_string).unwrap_or_else(|| crate::i18n::tr("Ошибка потока Groq")));
         }
         let choice = &j["choices"][0];
         if let Some(f) = choice["finish_reason"].as_str() {
@@ -500,7 +508,7 @@ fn groq_once(cfg: &Config, r: &Request, on_chunk: &dyn Fn(&str), cancel: &dyn Fn
     })?;
     let mut answer = answer.trim().to_string();
     if answer.is_empty() {
-        return Err("Groq вернул пустой ответ.".into());
+        return Err(crate::i18n::tr("Groq вернул пустой ответ."));
     }
     if finish == "length" {
         answer.push_str(" …");

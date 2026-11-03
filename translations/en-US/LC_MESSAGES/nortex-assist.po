@@ -1,0 +1,362 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: nortex-assist\n"
+"Language: en-US\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Точно удалить?"
+msgstr "Really delete?"
+
+msgid "Удаляет со второго нажатия, чтобы не стереть случайно"
+msgstr "Deletes on the second click so nothing is erased by accident"
+
+msgid "нажми клавиши…"
+msgstr "press keys…"
+
+msgid "Нажми и зажми новое сочетание клавиш.\nEsc — отмена"
+msgstr "Press and hold the new key combination.\nEsc — cancel"
+
+msgid "#4FD1C5 или 79, 209, 197"
+msgstr "#4FD1C5 or 79, 209, 197"
+
+msgid "Двигай по палитре или впиши HEX (#4FD1C5) или RGB (79, 209, 197)."
+msgstr "Drag on the palette or type HEX (#4FD1C5) or RGB (79, 209, 197)."
+
+msgid "Скопировано"
+msgstr "Copied"
+
+msgid "Копировать код"
+msgstr "Copy code"
+
+msgid "Скопировать только этот код"
+msgstr "Copy only this code"
+
+msgid "код"
+msgstr "code"
+
+msgid "Свернуть"
+msgstr "Collapse"
+
+msgid "Подробнее"
+msgstr "Show more"
+
+msgid "Оставить только короткий ответ"
+msgstr "Keep only the short answer"
+
+msgid "Показать полное объяснение"
+msgstr "Show the full explanation"
+
+msgid "Думаю"
+msgstr "Thinking"
+
+msgid "Gemini 3.5 Flash-Lite · быстрая, по умолчанию"
+msgstr "Gemini 3.5 Flash-Lite · fast, default"
+
+msgid "Gemini 3.8 Flash · новая, умнее"
+msgstr "Gemini 3.8 Flash · new, smarter"
+
+msgid "Gemini 3.1 Pro · самая умная, медленнее"
+msgstr "Gemini 3.1 Pro · smartest, slower"
+
+msgid "Gemini 2.5 Flash · запасная"
+msgstr "Gemini 2.5 Flash · backup"
+
+msgid "Своя модель…"
+msgstr "Custom model…"
+
+msgid "Предыдущий ответ"
+msgstr "Previous answer"
+
+msgid "Следующий ответ"
+msgstr "Next answer"
+
+msgid "Остановить ответ (Esc)"
+msgstr "Stop the answer (Esc)"
+
+msgid "Спросить заново (Alt+S).\nЕсли ответ уже пришёл, модель посчитает его\nневерным и попробует ответить по-другому"
+msgstr "Ask again (Alt+S).\nIf an answer has already arrived, the model will treat it\nas wrong and try to answer differently"
+
+msgid "Скопировать короткий ответ без оформления"
+msgstr "Copy the short answer without formatting"
+
+msgid "Вернуть оформление"
+msgstr "Restore formatting"
+
+msgid "Выделить текст: ответ станет простым текстом,\nкоторый можно выделить мышью и скопировать по частям"
+msgstr "Select text: the answer becomes plain text\nthat you can select with the mouse and copy in parts"
+
+msgid "История: прошлые вопросы и ответы.\nОтвет из истории можно уточнить"
+msgstr "History: past questions and answers.\nAn answer from history can be followed up"
+
+msgid "Настройки"
+msgstr "Settings"
+
+msgid "Закрепить окно: оно не будет прятаться,\nкогда кликаешь в другое место или жмёшь Esc"
+msgstr "Pin the window: it will not hide\nwhen you click elsewhere or press Esc"
+
+msgid "Спрятать окно (Esc) и остановить ответ.\nПрограмма остаётся в трее"
+msgstr "Hide the window (Esc) and stop the answer.\nThe program stays in the tray"
+
+msgid "Обновить"
+msgstr "Update"
+
+msgid "Скачать и поставить новую версию.\nПрограмма перезапустится сама,\nнастройки и история сохранятся"
+msgstr "Download and install the new version.\nThe program restarts by itself,\nsettings and history are kept"
+
+msgid "Напомнить при следующем запуске"
+msgstr "Remind me at the next launch"
+
+msgid "ПОСЛЕДНИЕ ДИАЛОГИ"
+msgstr "RECENT CHATS"
+
+msgid "История"
+msgstr "History"
+
+msgid "Очистить"
+msgstr "Clear"
+
+msgid "Удалить всё?"
+msgstr "Delete all?"
+
+msgid "Пока пусто: здесь появятся вопросы и ответы."
+msgstr "Nothing here yet: your questions and answers will appear here."
+
+msgid "Открыть ответ; его можно уточнить"
+msgstr "Open the answer; you can follow it up"
+
+msgid "Подключение"
+msgstr "Connection"
+
+msgid "Провайдер"
+msgstr "Provider"
+
+msgid "Модель Gemini"
+msgstr "Gemini model"
+
+msgid "Например: gemini-3.8-flash"
+msgstr "For example: gemini-3.8-flash"
+
+msgid "Модель Groq"
+msgstr "Groq model"
+
+msgid "Qwen 3.8 27B понимает текст и картинки."
+msgstr "Qwen 3.8 27B understands text and images."
+
+msgid "Там можно бесплатно получить ключ"
+msgstr "You can get a free key there"
+
+msgid "Проверить ключ"
+msgstr "Check the key"
+
+msgid "Проверить, что ключ рабочий\nи выбранная модель доступна"
+msgstr "Check that the key works\nand the selected model is available"
+
+msgid "Внешний вид"
+msgstr "Appearance"
+
+msgid "Тема"
+msgstr "Theme"
+
+msgid "Тёмная"
+msgstr "Dark"
+
+msgid "Светлая"
+msgstr "Light"
+
+msgid "Прозрачность окна: "
+msgstr "Window opacity: "
+
+msgid "Акцентный цвет"
+msgstr "Accent colour"
+
+msgid "Свой цвет: палитра, HEX или RGB"
+msgstr "Own colour: palette, HEX or RGB"
+
+msgid "Размер текста ответа"
+msgstr "Answer text size"
+
+msgid "Поверх окон"
+msgstr "On top of windows"
+
+msgid "Короткий ответ в маленьком окне, которое не забирает фокус и пропускает клики. Работает над играми (в окне или без рамки), видео и лекциями."
+msgstr "A short answer in a small window that does not take focus and lets clicks through. Works over games (windowed or borderless), videos and lectures."
+
+msgid "Размер текста в этом окне. Оно само подстраивается под ответ."
+msgstr "Text size in this window. It fits itself to the answer."
+
+msgid "Так будет выглядеть:"
+msgstr "It will look like this:"
+
+msgid "Канберра"
+msgstr "Canberra"
+
+msgid "Ответы"
+msgstr "Answers"
+
+msgid "Заготовки"
+msgstr "Presets"
+
+msgid "Только ответ"
+msgstr "Answer only"
+
+msgid "Короткий ответ без объяснений (как раньше)"
+msgstr "A short answer without explanations (as before)"
+
+msgid "С пояснением"
+msgstr "With a reason"
+
+msgid "Ответ и пара предложений, почему так"
+msgstr "The answer and a couple of sentences on why"
+
+msgid "Подробно"
+msgstr "Detailed"
+
+msgid "Подробное решение по шагам.\nМодель думает дольше"
+msgstr "A detailed step-by-step solution.\nThe model thinks longer"
+
+msgid "Промпт, который получает нейросеть (можно переписать своими словами, в том числе по-русски)"
+msgstr "The prompt the AI receives (you can rewrite it in your own words, in any language)"
+
+msgid "Изменённый промпт действует и в режиме «Поверх окон»."
+msgstr "A changed prompt also applies in the «On top of windows» mode."
+
+msgid "Сбросить"
+msgstr "Reset"
+
+msgid "Вернуть встроенный промпт «Только ответ»"
+msgstr "Restore the built-in «Answer only» prompt"
+
+msgid "Короткий ответ, подробности по кнопке"
+msgstr "Short answer, details on a button"
+
+msgid "Сначала короткий ответ, а объяснение раскрывается кнопкой «Подробнее». Выключите, чтобы получать ответ целиком."
+msgstr "First a short answer, and the explanation opens with the «Show more» button. Turn off to get the whole answer at once."
+
+msgid "Поведение"
+msgstr "Behaviour"
+
+msgid "Запускать вместе с Windows"
+msgstr "Start with Windows"
+
+msgid "Отображать приложение в трее"
+msgstr "Show the app in the tray"
+
+msgid "Без значка в трее окно открывается горячими клавишами ("
+msgstr "Without a tray icon the window opens with the hotkey ("
+
+msgid "), а выйти можно кнопкой «Закрыть программу» внизу настроек."
+msgstr "), and you can quit with the «Close program» button at the bottom of settings."
+
+msgid "Сохранять историю (зашифрованно)"
+msgstr "Keep history (encrypted)"
+
+msgid "Очистить историю"
+msgstr "Clear history"
+
+msgid "Удалить всю историю?"
+msgstr "Delete all history?"
+
+msgid "Скриншот ("
+msgstr "Screenshot ("
+
+msgid "Выделить область"
+msgstr "Select an area"
+
+msgid "Весь экран"
+msgstr "Whole screen"
+
+msgid "Ножницы Windows"
+msgstr "Windows Snipping Tool"
+
+msgid "Экран замирает, обведи нужное мышью.\nКлик без выделения — весь экран"
+msgstr "The screen freezes, outline what you need with the mouse.\nA click without selecting takes the whole screen"
+
+msgid "Сразу весь монитор под курсором, без выделения"
+msgstr "The whole monitor under the cursor at once, no selecting"
+
+msgid "Встроенный инструмент Windows (как раньше)"
+msgstr "The built-in Windows tool (as before)"
+
+msgid "Экран замирает, обведи нужное мышью. Клик без выделения — весь экран, Esc — отмена. До 4 снимков подряд."
+msgstr "The screen freezes, outline what you need with the mouse. A click without selecting takes the whole screen, Esc cancels. Up to 4 shots in a row."
+
+msgid "Снимается весь монитор под курсором, сразу открывается окно с вопросом. До 4 снимков подряд."
+msgstr "The whole monitor under the cursor is captured and the question window opens at once. Up to 4 shots in a row."
+
+msgid "Открываются «Ножницы» Windows; после выделения снимок попадает в окно с вопросом."
+msgstr "The Windows Snipping Tool opens; after you select, the shot lands in the question window."
+
+msgid "Горячие клавиши"
+msgstr "Hotkeys"
+
+msgid "По умолчанию"
+msgstr "Defaults"
+
+msgid "Вернуть Alt+Q, Alt+W, Alt+E, Alt+S"
+msgstr "Restore Alt+Q, Alt+W, Alt+E, Alt+S"
+
+msgid "Обновления"
+msgstr "Updates"
+
+msgid "Проверять обновления автоматически"
+msgstr "Check for updates automatically"
+
+msgid "Проверить сейчас"
+msgstr "Check now"
+
+msgid "Спросить у GitHub, есть ли новая версия"
+msgstr "Ask GitHub if there is a new version"
+
+msgid "Удалить программу.\nПопросит подтвердить, кнопка включится через 5 секунд"
+msgstr "Uninstall the program.\nIt will ask you to confirm, the button turns on after 5 seconds"
+
+msgid "Закрыть программу"
+msgstr "Close the program"
+
+msgid "Сохранить настройки и полностью выйти.\nГорячие клавиши перестанут работать"
+msgstr "Save the settings and quit completely.\nHotkeys will stop working"
+
+msgid "Готово"
+msgstr "Done"
+
+msgid "Сохранить настройки и вернуться к ответу"
+msgstr "Save the settings and return to the answer"
+
+msgid "Убрать эту картинку"
+msgstr "Remove this picture"
+
+msgid "Убрать из вопроса"
+msgstr "Remove from the question"
+
+msgid "Прикрепить файлы.\nТекст из них попадёт в вопрос"
+msgstr "Attach files.\nTheir text goes into the question"
+
+msgid "Отправить (Enter).\nCtrl+V в поле вставляет картинку из буфера"
+msgstr "Send (Enter).\nCtrl+V in the field pastes a picture from the clipboard"
+
+msgid "Потяни, чтобы изменить размер окна"
+msgstr "Drag to resize the window"
+
+msgid "Удалить Nortex Assist?"
+msgstr "Uninstall Nortex Assist?"
+
+msgid "Программа, её настройки, ключи API и история будут удалены с этого компьютера. Отменить это нельзя."
+msgstr "The program, its settings, API keys and history will be removed from this computer. This cannot be undone."
+
+msgid "Отмена"
+msgstr "Cancel"
+
+msgid "Удалить ("
+msgstr "Delete ("
+
+msgid "Удалить"
+msgstr "Delete"
+
+msgid "Nortex Assist — снимок области"
+msgstr "Nortex Assist — area capture"
+
+msgid "Выдели область мышью   ·   клик — весь экран   ·   Esc — отмена"
+msgstr "Select an area with the mouse   ·   click — whole screen   ·   Esc — cancel"

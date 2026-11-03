@@ -283,7 +283,9 @@ pub fn pick_paths(folder: bool, owner: isize) -> Vec<std::path::PathBuf> {
                 opts |= FOS_PICKFOLDERS;
             }
             dlg.SetOptions(opts)?;
-            dlg.SetTitle(if folder { w!("Выберите папку с файлами") } else { w!("Выберите файлы") })?;
+            let title = if folder { crate::i18n::tr("Выберите папку с файлами") } else { crate::i18n::tr("Выберите файлы") };
+            let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+            dlg.SetTitle(windows::core::PCWSTR(wide.as_ptr()))?;
             dlg.Show(Some(hwnd(owner)))?; // Err when the user cancels
             let items = dlg.GetResults()?;
             for i in 0..items.GetCount()? {

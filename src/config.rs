@@ -98,6 +98,8 @@ pub struct Config {
     pub two_level: Option<bool>,
     /// Size of the answer text in percent (one of TEXT_SCALES); None = 100.
     pub text_scale: Option<u32>,
+    /// Interface language: "en" for English, anything else is Russian.
+    pub lang: String,
 }
 
 impl Config {
@@ -118,6 +120,9 @@ impl Config {
     }
     pub fn overlay_font_index(&self) -> usize {
         OVERLAY_FONTS.iter().position(|&f| f == self.overlay_font()).unwrap_or(2)
+    }
+    pub fn is_en(&self) -> bool {
+        self.lang == "en"
     }
     pub fn two_level_on(&self) -> bool {
         self.two_level != Some(false)
@@ -253,18 +258,18 @@ pub struct SettingsInput {
 
 pub fn validate(s: &SettingsInput) -> Result<(), String> {
     if s.provider != "gemini" && s.provider != "groq" {
-        return Err("Неизвестный провайдер модели".into());
+        return Err(crate::i18n::tr("Неизвестный провайдер модели"));
     }
     for (k, name) in [(&s.gemini_key, "Gemini"), (&s.groq_key, "Groq")] {
         let k = k.trim();
         if !k.is_empty() && (k.chars().count() < 10 || k.chars().count() > 500 || k.chars().any(char::is_whitespace)) {
-            return Err(format!("Ключ {name} выглядит неверно"));
+            return Err(crate::i18n::trf("Ключ {name} выглядит неверно", &[("name", name)]));
         }
     }
     if s.provider == "gemini" && !s.model.is_empty() {
         let re = Regex::new(r"(?i)^gemini-[a-z0-9.\-]+$").unwrap();
         if !re.is_match(&s.model) {
-            return Err("Недопустимое имя модели Gemini".into());
+            return Err(crate::i18n::tr("Недопустимое имя модели Gemini"));
         }
     }
     let accel = Regex::new(r"^(?:(?:Ctrl|Alt|Shift|Super)\+){0,4}[\w`\-=,./;'\[\]]{1,20}$").unwrap();
@@ -272,21 +277,21 @@ pub fn validate(s: &SettingsInput) -> Result<(), String> {
     for i in 0..HOTKEY_NAMES.len() {
         let a = s.hotkeys.get(i);
         if !accel.is_match(a) {
-            return Err(format!("Недопустимое сочетание клавиш: {}", a.chars().take(30).collect::<String>()));
+            return Err(crate::i18n::trf("Недопустимое сочетание клавиш: {a}", &[("a", &a.chars().take(30).collect::<String>())]));
         }
         if seen.contains(&a) {
-            return Err("Два действия используют одинаковые клавиши".into());
+            return Err(crate::i18n::tr("Два действия используют одинаковые клавиши"));
         }
         seen.push(a);
     }
     if !ACCENTS.contains(&s.accent.as_str()) {
-        return Err("Неизвестный акцентный цвет".into());
+        return Err(crate::i18n::tr("Неизвестный акцентный цвет"));
     }
     if !((MIN_OPACITY * 100.0) as i32..=100).contains(&s.opacity) {
-        return Err(format!("Прозрачность должна быть от {} до 100%", (MIN_OPACITY * 100.0) as i32));
+        return Err(crate::i18n::trf("Прозрачность должна быть от {min} до 100%", &[("min", &((MIN_OPACITY * 100.0) as i32).to_string())]));
     }
     if s.prompt.chars().count() > MAX_PROMPT {
-        return Err(format!("Промпт слишком длинный (больше {MAX_PROMPT} символов)"));
+        return Err(crate::i18n::trf("Промпт слишком длинный (больше {max} символов)", &[("max", &MAX_PROMPT.to_string())]));
     }
     Ok(())
 }

@@ -1,5 +1,8 @@
 fn main() {
-    let config = slint_build::CompilerConfiguration::new().with_style("fluent".into());
+    let config = slint_build::CompilerConfiguration::new()
+        .with_style("fluent".into())
+        .with_bundled_translations("translations")
+        .with_default_translation_context(slint_build::DefaultTranslationContext::None);
     slint_build::compile_with_config("ui/main.slint", config).expect("slint compile");
 
     // exe icon + version info (shown in Explorer, taskbar pins, task manager)
