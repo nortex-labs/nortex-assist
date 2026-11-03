@@ -19,7 +19,7 @@
   <a href="README.md">Русский</a> · <b>English</b>
 </p>
 
-> The app's interface is in Russian.
+> The interface is available in Russian and English: use the small RU | EN switch at the bottom of the settings.
 
 <p align="center">
   <img src="docs/images/screenshot-main.png" width="380" alt="Main window">
@@ -42,8 +42,16 @@ Both update themselves. If Windows SmartScreen warns about an unknown publisher,
 2. Get a free API key, one of:
    - **Gemini:** open [Google AI Studio](https://aistudio.google.com/app/apikey), sign in, click "Create API key" and copy it.
    - **Groq:** open [Groq Console](https://console.groq.com/keys), sign up, click "Create API Key" and copy it.
-3. On first launch the settings open by themselves. Pick the provider, paste the key and click «Готово» (Done).
+3. On first launch the settings open by themselves. Pick the provider, paste the key and click "Done".
 4. Select some text in any app and press **Alt+Q**. The answer appears in a window at the bottom right.
+
+## Features
+
+- **Short answer first.** A one-line answer appears at once; the "Show more" button opens the full explanation.
+- **Readable answers.** Headings, lists, formulas and code blocks (each with its own "Copy code" button). The "Copy" button in the toolbar copies the short answer without formatting; "Select text" turns the answer into plain text you can select with the mouse.
+- **Files.** The paperclip next to the input field attaches text files to your question.
+- **On top of windows.** A small click-through window with a short answer that never takes focus: works over games, videos and lectures.
+- **Two languages.** The whole interface, and the answers, can be switched between Russian and English.
 
 ## Hotkeys
 
