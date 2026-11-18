@@ -334,8 +334,8 @@ msgstr "Remove from the question"
 msgid "Прикрепить файлы.\nТекст из них попадёт в вопрос"
 msgstr "Attach files.\nTheir text goes into the question"
 
-msgid "Отправить (Enter).\nCtrl+V в поле вставляет картинку из буфера"
-msgstr "Send (Enter).\nCtrl+V in the field pastes a picture from the clipboard"
+msgid "Отправить (Enter), Shift+Enter: новая строка.\nCtrl+V в поле вставляет картинку из буфера"
+msgstr "Send (Enter), Shift+Enter: new line.\nCtrl+V in the field pastes a picture from the clipboard"
 
 msgid "Потяни, чтобы изменить размер окна"
 msgstr "Drag to resize the window"

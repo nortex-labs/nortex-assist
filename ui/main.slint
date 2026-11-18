@@ -331,6 +331,10 @@ component Field inherits Rectangle {
     // Slint matches Ctrl+C/V/X/A by the typed letter, so they die on a Russian layout;
     // handle the Cyrillic keys that sit on the same physical keys, plus Shift+Insert.
     FocusScope {
+        x: 10px;
+        y: 0;
+        width: parent.width - 20px;
+        height: parent.height;
         capture-key-pressed(e) => {
             if (e.modifiers.control && !e.modifiers.alt) {
                 if (e.text == "м" || e.text == "М") { ti.paste(); return accept; }
@@ -341,19 +345,39 @@ component Field inherits Rectangle {
             if (e.modifiers.shift && e.text == Key.Insert) { ti.paste(); return accept; }
             return reject;
         }
-        ti := TextInput {
-            x: 10px;
-            y: 0;
-            width: parent.width - 20px;
+        // A bare TextInput never scrolls by itself, so a long line (an API key, a model name) ran
+        // out of the field and its end could not be seen. `cursor-position-changed` moves the
+        // Flickable to the cursor, the way the standard LineEdit does it.
+        field-fl := Flickable {
+            width: parent.width;
             height: parent.height;
-            vertical-alignment: center;
-            text <=> root.text;
-            input-type: root.password ? InputType.password : InputType.text;
-            color: Theme.fg;
-            font-size: 13px;
-            single-line: true;
-            edited => { root.edited(); }
-            accepted => { root.accepted(); }
+            interactive: false;
+            content-width: max(self.width, ti.width);
+            content-height: self.height;
+            ti := TextInput {
+                width: max(field-fl.width, self.preferred-width + 4px);
+                height: field-fl.height;
+                vertical-alignment: center;
+                text <=> root.text;
+                input-type: root.password ? InputType.password : InputType.text;
+                color: Theme.fg;
+                font-size: 13px;
+                single-line: true;
+                edited => { root.edited(); }
+                accepted => { root.accepted(); }
+                cursor-position-changed(cpos) => {
+                    if (cpos.x + field-fl.content-x < 0px) {
+                        field-fl.content-x = -cpos.x;
+                    } else if (cpos.x + field-fl.content-x > field-fl.width - 2px) {
+                        field-fl.content-x = field-fl.width - cpos.x - 2px;
+                    }
+                }
+                changed width => {
+                    if (field-fl.content-x < field-fl.width - self.width) {
+                        field-fl.content-x = min(0px, field-fl.width - self.width);
+                    }
+                }
+            }
         }
     }
     if root.text == "": Text {
@@ -1766,10 +1790,12 @@ export component MainWindow inherits Window {
                 }
 
                 // ---- composer: grows in from the bottom ----
-                Rectangle {
+                composer-box := Rectangle {
                     property <bool> shown: root.composer-on && !root.panel-open && !root.overlay-view;
+                    // the input field grows with the text (up to about six lines), then it scrolls inside
+                    property <length> field-h: min(max(44px, inp.preferred-height + 26px), 140px);
                     visible: shown;
-                    height: shown ? 58px + (root.thumbs.length > 0 ? 76px : 0px) + (root.files.length > 0 ? 36px : 0px) : 0px;
+                    height: shown ? 14px + self.field-h + (root.thumbs.length > 0 ? 76px : 0px) + (root.files.length > 0 ? 36px : 0px) : 0px;
                     animate height { duration: 180ms; easing: ease-out; }
                     clip: true;
                     VerticalLayout {
@@ -1857,7 +1883,7 @@ export component MainWindow inherits Window {
                             }
                         }
                         Rectangle {
-                            height: 44px;
+                            height: composer-box.field-h;
                             background: Theme.field;
                             border-radius: 12px;
                             border-width: 1px;
@@ -1869,29 +1895,36 @@ export component MainWindow inherits Window {
                                 padding-top: 7px;
                                 padding-bottom: 7px;
                                 spacing: 6px;
-                                Rectangle {
+                                // the buttons stay at the bottom edge while the field grows upwards
+                                VerticalLayout {
                                     width: 30px;
-                                    border-radius: 9px;
-                                    background: cla.pressed ? Theme.line-strong : cla.has-hover ? Theme.line : transparent;
-                                    animate background { duration: 140ms; }
-                                    Image {
-                                        source: @image-url("icons/clip.svg");
-                                        width: 16px;
-                                        height: 16px;
-                                        x: (parent.width - self.width) / 2;
-                                        y: (parent.height - self.height) / 2;
-                                        colorize: cla.has-hover ? Theme.accent-text : Theme.muted;
-                                        animate colorize { duration: 140ms; }
-                                    }
-                                    cla := TipArea {
-                                        tip: @tr("Прикрепить файлы.\nТекст из них попадёт в вопрос");
-                                        mouse-cursor: MouseCursor.pointer;
-                                        clicked => { root.attach-pick(false); }
+                                    alignment: end;
+                                    Rectangle {
+                                        height: 30px;
+                                        border-radius: 9px;
+                                        background: cla.pressed ? Theme.line-strong : cla.has-hover ? Theme.line : transparent;
+                                        animate background { duration: 140ms; }
+                                        Image {
+                                            source: @image-url("icons/clip.svg");
+                                            width: 16px;
+                                            height: 16px;
+                                            x: (parent.width - self.width) / 2;
+                                            y: (parent.height - self.height) / 2;
+                                            colorize: cla.has-hover ? Theme.accent-text : Theme.muted;
+                                            animate colorize { duration: 140ms; }
+                                        }
+                                        cla := TipArea {
+                                            tip: @tr("Прикрепить файлы.\nТекст из них попадёт в вопрос");
+                                            mouse-cursor: MouseCursor.pointer;
+                                            clicked => { root.attach-pick(false); }
+                                        }
                                     }
                                 }
                                 Rectangle {
                                     horizontal-stretch: 1;
                                     FocusScope {
+                                        width: parent.width;
+                                        height: parent.height;
                                         capture-key-pressed(e) => {
                                             if (e.modifiers.control && !e.modifiers.alt) {
                                                 if (e.text == "м" || e.text == "М") { inp.paste(); return accept; }
@@ -1900,18 +1933,45 @@ export component MainWindow inherits Window {
                                                 if (e.text == "ч" || e.text == "Ч") { inp.cut(); return accept; }
                                             }
                                             if (e.modifiers.shift && e.text == Key.Insert) { inp.paste(); return accept; }
+                                            // Enter sends the question, Shift+Enter starts a new line
+                                            if (e.text == Key.Return && !e.modifiers.shift) { root.submit(inp.text); return accept; }
                                             return reject;
                                         }
-                                        inp := TextInput {
-                                            y: 0;
+                                        // The text wraps onto new lines. A bare TextInput never scrolls by itself:
+                                        // `cursor-position-changed` below moves the Flickable (the standard LineEdit
+                                        // and TextEdit do the same), so the end of what is typed is always in view.
+                                        // The Flickable is 3px taller than the field on both sides, so the letters
+                                        // of the line with the cursor are not cut at the edge.
+                                        comp-fl := Flickable {
+                                            y: -3px;
                                             width: parent.width;
-                                            height: parent.height;
-                                            vertical-alignment: center;
-                                            text <=> root.composer-text;
-                                            color: Theme.fg;
-                                            font-size: 14px;
-                                            single-line: true;
-                                            accepted => { root.submit(self.text); }
+                                            height: parent.height + 6px;
+                                            interactive: false;
+                                            content-width: self.width;
+                                            content-height: inp.height;
+                                            inp := TextInput {
+                                                width: comp-fl.width;
+                                                height: max(comp-fl.height, self.preferred-height);
+                                                vertical-alignment: center;
+                                                text <=> root.composer-text;
+                                                color: Theme.fg;
+                                                font-size: 14px;
+                                                single-line: false;
+                                                wrap: TextWrap.word-wrap;
+                                                cursor-position-changed(cpos) => {
+                                                    if (cpos.y + comp-fl.content-y < 0px) {
+                                                        comp-fl.content-y = -cpos.y;
+                                                    } else if (cpos.y + comp-fl.content-y > comp-fl.height - 22px) {
+                                                        comp-fl.content-y = comp-fl.height - cpos.y - 22px;
+                                                    }
+                                                }
+                                                // text deleted: do not leave an empty strip under the last line
+                                                changed height => {
+                                                    if (comp-fl.content-y < comp-fl.height - self.height) {
+                                                        comp-fl.content-y = min(0px, comp-fl.height - self.height);
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                     if root.composer-text == "": Text {
@@ -1925,27 +1985,31 @@ export component MainWindow inherits Window {
                                         overflow: TextOverflow.elide;
                                     }
                                 }
-                                Rectangle {
+                                VerticalLayout {
                                     width: 30px;
-                                    // grey at rest, lights up with the accent colour under the pointer
-                                    background: sta.pressed ? Theme.accent.darker(0.2) : sta.has-hover ? Theme.accent : Theme.line-strong;
-                                    animate background { duration: 140ms; }
-                                    border-radius: 9px;
-                                    Image {
-                                        source: @image-url("icons/send.svg");
-                                        width: 14px;
-                                        height: 14px;
-                                        // the arrow nudges forward under the pointer
-                                        x: (parent.width - self.width) / 2 + (sta.has-hover ? 2px : 0px);
-                                        y: (parent.height - self.height) / 2 - (sta.has-hover ? 1px : 0px);
-                                        animate x, y { duration: 160ms; easing: ease-out; }
-                                        colorize: sta.has-hover || sta.pressed ? Theme.accent-ink : Theme.muted;
-                                        animate colorize { duration: 140ms; }
-                                    }
-                                    sta := TipArea {
-                                        tip: @tr("Отправить (Enter).\nCtrl+V в поле вставляет картинку из буфера");
-                                        mouse-cursor: MouseCursor.pointer;
-                                        clicked => { root.submit(root.composer-text); }
+                                    alignment: end;
+                                    Rectangle {
+                                        height: 30px;
+                                        // grey at rest, lights up with the accent colour under the pointer
+                                        background: sta.pressed ? Theme.accent.darker(0.2) : sta.has-hover ? Theme.accent : Theme.line-strong;
+                                        animate background { duration: 140ms; }
+                                        border-radius: 9px;
+                                        Image {
+                                            source: @image-url("icons/send.svg");
+                                            width: 14px;
+                                            height: 14px;
+                                            // the arrow nudges forward under the pointer
+                                            x: (parent.width - self.width) / 2 + (sta.has-hover ? 2px : 0px);
+                                            y: (parent.height - self.height) / 2 - (sta.has-hover ? 1px : 0px);
+                                            animate x, y { duration: 160ms; easing: ease-out; }
+                                            colorize: sta.has-hover || sta.pressed ? Theme.accent-ink : Theme.muted;
+                                            animate colorize { duration: 140ms; }
+                                        }
+                                        sta := TipArea {
+                                            tip: @tr("Отправить (Enter), Shift+Enter: новая строка.\nCtrl+V в поле вставляет картинку из буфера");
+                                            mouse-cursor: MouseCursor.pointer;
+                                            clicked => { root.submit(root.composer-text); }
+                                        }
                                     }
                                 }
                             }
@@ -2064,7 +2128,7 @@ export component MainWindow inherits Window {
                 width: min(toast-label.preferred-width + 28px, parent.width - 32px);
                 height: toast-label.preferred-height + 16px;
                 x: (parent.width - self.width) / 2;
-                y: parent.height - self.height - (root.settings-open ? 64px : root.composer-on && !root.panel-open ? 74px : 18px) + (shown ? 0px : 10px);
+                y: parent.height - self.height - (root.settings-open ? 64px : root.composer-on && !root.panel-open ? composer-box.height + 16px : 18px) + (shown ? 0px : 10px);
                 opacity: shown ? 1 : 0;
                 animate y, opacity { duration: 200ms; easing: ease-out; }
                 background: Theme.raised;
