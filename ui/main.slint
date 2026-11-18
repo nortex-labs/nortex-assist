@@ -1321,8 +1321,11 @@ export component MainWindow inherits Window {
                 // ---- answer ----
                 if !root.panel-open && !root.overlay-view: Panel {
                     vertical-stretch: 1;
-                    ScrollView {
+                    answer-sv := ScrollView {
                         vertical-stretch: 1;
+                        // how far the answer goes: taken from where it really ends (see `answer-end` below)
+                        property <length> content-end;
+                        content-height: max(self.visible-height, self.content-end);
                         VerticalLayout {
                             padding-left: 16px;
                             padding-right: 16px;
@@ -1384,6 +1387,16 @@ export component MainWindow inherits Window {
                                 wrap: TextWrap.word-wrap;
                                 color: Theme.subtle;
                                 font-size: 12px;
+                            }
+                            // Marks the end of the answer. By default a scroll view is as tall as the
+                            // minimal height of its content, and Slint measures wrapped text in the answer
+                            // blocks as if every paragraph were one line, so a long answer stopped scrolling
+                            // early or did not scroll at all. The blocks themselves are laid out right, so
+                            // this marker sits where the answer really ends (12px = padding-bottom).
+                            answer-end := Rectangle {
+                                height: 0px;
+                                init => { answer-sv.content-end = self.y + 12px; }
+                                changed y => { answer-sv.content-end = self.y + 12px; }
                             }
                         }
                     }

@@ -3,7 +3,7 @@
 ; Output: installer\Output\NortexAssist-Setup-<version>.exe
 
 #define MyAppName "Nortex Assist"
-#define MyAppVersion "1.3.1"
+#define MyAppVersion "1.3.2"
 #define MyAppExe "nortex-assist.exe"
 
 [Setup]
