@@ -1,41 +1,15 @@
 //! Clipboard snapshot/restore, selection grabbing, screen snipping and image encoding.
 
 use crate::logging::log_err;
-use arboard::{Clipboard, ImageData};
+use arboard::Clipboard;
 use base64::Engine;
 use image::{imageops::FilterType, DynamicImage, RgbaImage};
-use std::borrow::Cow;
 use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 const MAX_SIDE: u32 = 2000;
 const JPEG_QUALITY: u8 = 88;
-
-pub struct Snapshot {
-    text: Option<String>,
-    image: Option<(usize, usize, Vec<u8>)>,
-}
-
-pub fn snapshot() -> Snapshot {
-    let mut s = Snapshot { text: None, image: None };
-    if let Ok(mut cb) = Clipboard::new() {
-        s.text = cb.get_text().ok().filter(|t| !t.is_empty());
-        s.image = cb.get_image().ok().map(|i| (i.width, i.height, i.bytes.into_owned()));
-    }
-    s
-}
-
-pub fn restore(s: Snapshot) {
-    let Ok(mut cb) = Clipboard::new() else { return };
-    if let Some(t) = s.text {
-        let _ = cb.set_text(t);
-    } else if let Some((width, height, bytes)) = s.image {
-        let _ = cb.set_image(ImageData { width, height, bytes: Cow::Owned(bytes) });
-    } else {
-        let _ = cb.clear();
-    }
-}
 
 pub fn set_text(text: &str) {
     if let Ok(mut cb) = Clipboard::new() {
@@ -44,26 +18,38 @@ pub fn set_text(text: &str) {
 }
 
 /// Copies the current selection of the foreground app via Ctrl+C and puts the clipboard back.
-pub fn grab_selection() -> String {
-    let prev = snapshot();
-    let mark = format!("__nortex_selection_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0));
-    let result = (|| {
-        let mut cb = Clipboard::new().ok()?;
-        cb.set_text(mark.clone()).ok()?;
-        if !crate::native::copy_selection() {
-            return None;
-        }
-        for _ in 0..80 {
-            if let Ok(t) = cb.get_text() {
-                if t != mark && !t.trim().is_empty() {
-                    return Some(t.trim().to_string());
+/// Waits up to `wait` for the app to copy; a code editor that copied its whole line because
+/// nothing was selected counts as "nothing selected" (empty result).
+/// The clipboard is left exactly as it was: when nothing was copied it is not touched at all,
+/// otherwise every format (copied files, formatted text, pictures) is put back.
+pub fn grab_selection(wait: Duration) -> String {
+    use crate::native::{clipboard_restore, clipboard_save, clipboard_seq};
+    let prev = clipboard_save();
+    let seq = clipboard_seq();
+    if !crate::native::copy_selection() {
+        return String::new();
+    }
+    let end = Instant::now() + wait;
+    let mut result = None;
+    loop {
+        if clipboard_seq() != seq {
+            if let Ok(t) = Clipboard::new().and_then(|mut cb| cb.get_text()) {
+                if !t.trim().is_empty() {
+                    if !crate::native::clipboard_is_line_copy() {
+                        result = Some(t.trim().to_string());
+                    }
+                    break;
                 }
             }
-            std::thread::sleep(Duration::from_millis(25));
         }
-        None
-    })();
-    restore(prev);
+        if Instant::now() >= end {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if clipboard_seq() != seq {
+        clipboard_restore(&prev);
+    }
     result.unwrap_or_default()
 }
 
@@ -120,7 +106,7 @@ pub fn thumbnail(width: u32, height: u32, rgba: &[u8]) -> Option<(u32, u32, Vec<
 /// Opens the Windows snipping overlay and waits (up to 60 s) for an image to land in the clipboard.
 /// A newer call bumps `token`, which cancels this one.
 pub fn snip(token: &AtomicU64, my: u64) -> Option<(u32, u32, Vec<u8>)> {
-    let prev = snapshot();
+    let prev = crate::native::clipboard_save();
     if let Ok(mut cb) = Clipboard::new() {
         let _ = cb.clear();
     }
@@ -133,13 +119,13 @@ pub fn snip(token: &AtomicU64, my: u64) -> Option<(u32, u32, Vec<u8>)> {
         if let Ok(img) = Clipboard::new().and_then(|mut cb| cb.get_image()) {
             let (w, h) = (img.width as u32, img.height as u32);
             if w > 0 && h > 0 {
-                restore(prev);
+                crate::native::clipboard_restore(&prev);
                 return Some((w, h, img.bytes.into_owned()));
             }
         }
     }
     if token.load(Ordering::SeqCst) == my {
-        restore(prev);
+        crate::native::clipboard_restore(&prev);
     }
     None
 }

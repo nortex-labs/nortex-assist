@@ -33,7 +33,9 @@ fn key(vk: u8, up: bool) {
     unsafe { keybd_event(vk, 0, if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) }, 0) }
 }
 
-/// Wait until the hotkey modifiers are released, then send Ctrl+C to the foreground window.
+/// Wait until the hotkey modifiers are released, then ask the foreground window to copy its selection.
+/// Terminals (and editors with a built-in terminal) get Ctrl+Insert: there Ctrl+C without a
+/// selection stops the running command. Everything else gets the usual Ctrl+C.
 pub fn copy_selection() -> bool {
     let held = || [0x10, 0x11, 0x12, 0x5B, 0x5C].iter().any(|&v| unsafe { GetAsyncKeyState(v) } < 0);
     let mut waited = 0;
@@ -44,11 +46,166 @@ pub fn copy_selection() -> bool {
     if held() {
         return false;
     }
-    key(VK_CONTROL, false);
-    key(VK_C, false);
-    key(VK_C, true);
-    key(VK_CONTROL, true);
+    let fg = foreground();
+    let (class, exe) = (window_class(fg), process_name(fg));
+    if is_terminal(&class, &exe) {
+        key(VK_CONTROL, false);
+        key_ext(VK_INSERT, false);
+        key_ext(VK_INSERT, true);
+        key(VK_CONTROL, true);
+    } else {
+        key(VK_CONTROL, false);
+        key(VK_C, false);
+        key(VK_C, true);
+        key(VK_CONTROL, true);
+    }
     true
+}
+
+const VK_INSERT: u8 = 0x2D;
+
+/// Insert is an "extended" key: without the flag some programs read it as keypad 0.
+fn key_ext(vk: u8, up: bool) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{MapVirtualKeyW, KEYEVENTF_EXTENDEDKEY, MAPVK_VK_TO_VSC};
+    unsafe {
+        let scan = MapVirtualKeyW(vk as u32, MAPVK_VK_TO_VSC) as u8;
+        let flags = if up { KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY } else { KEYEVENTF_EXTENDEDKEY };
+        keybd_event(vk, scan, flags, 0)
+    }
+}
+
+/// A window where Ctrl+C means "interrupt": consoles, terminal apps, code editors with a terminal panel.
+pub fn is_terminal(class: &str, exe: &str) -> bool {
+    const CLASSES: [&str; 6] = ["ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS", "mintty", "PuTTY", "VirtualConsoleClass", "org.wezfurlong.wezterm"];
+    const EXES: [&str; 22] = [
+        "windowsterminal.exe", "wt.exe", "conhost.exe", "openconsole.exe", "cmd.exe", "powershell.exe", "pwsh.exe", "mintty.exe",
+        "putty.exe", "kitty.exe", "conemu64.exe", "conemu.exe", "alacritty.exe", "wezterm-gui.exe", "tabby.exe", "hyper.exe",
+        "warp.exe", "code.exe", "code - insiders.exe", "cursor.exe", "windsurf.exe", "vscodium.exe",
+    ];
+    CLASSES.iter().any(|c| class.eq_ignore_ascii_case(c)) || EXES.iter().any(|e| exe.eq_ignore_ascii_case(e))
+}
+
+fn window_class(h: isize) -> String {
+    use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+    let mut buf = [0u16; 256];
+    let n = unsafe { GetClassNameW(hwnd(h), &mut buf) };
+    String::from_utf16_lossy(&buf[..n.max(0) as usize])
+}
+
+/// File name of the program that owns the window, e.g. "code.exe".
+fn process_name(h: isize) -> String {
+    use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
+    unsafe {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd(h), Some(&mut pid));
+        if pid == 0 {
+            return String::new();
+        }
+        let Ok(p) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return String::new() };
+        let mut buf = [0u16; 1024];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(p, PROCESS_NAME_WIN32, windows::core::PWSTR(buf.as_mut_ptr()), &mut len).is_ok();
+        let _ = CloseHandle(p);
+        if !ok {
+            return String::new();
+        }
+        let full = String::from_utf16_lossy(&buf[..len as usize]);
+        full.rsplit('\\').next().unwrap_or("").to_lowercase()
+    }
+}
+
+/// Everything in the clipboard, format by format, so that it can be put back exactly
+/// (copied files, formatted text, pictures — not only plain text).
+pub struct ClipboardCopy(Vec<(u32, Vec<u8>)>);
+
+/// Changes every time anything is put into the clipboard.
+pub fn clipboard_seq() -> u32 {
+    unsafe { windows::Win32::System::DataExchange::GetClipboardSequenceNumber() }
+}
+
+fn open_clipboard() -> bool {
+    use windows::Win32::System::DataExchange::OpenClipboard;
+    for _ in 0..25 {
+        if unsafe { OpenClipboard(None) }.is_ok() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    false
+}
+
+/// Formats that are not plain memory blocks (GDI handles) or that point into another program's
+/// objects: Windows rebuilds the useful ones (a bitmap from the DIB) by itself.
+fn skip_format(f: u32, name: &str) -> bool {
+    matches!(f, 2 | 3 | 9 | 14 | 0x80 | 0x82 | 0x83 | 0x8E) || (0x200..=0x3FF).contains(&f) || name == "DataObject" || name == "Ole Private Data"
+}
+
+fn format_name(f: u32) -> String {
+    use windows::Win32::System::DataExchange::GetClipboardFormatNameW;
+    let mut buf = [0u16; 128];
+    let n = unsafe { GetClipboardFormatNameW(f, &mut buf) };
+    String::from_utf16_lossy(&buf[..n.max(0) as usize])
+}
+
+pub fn clipboard_save() -> ClipboardCopy {
+    use windows::Win32::Foundation::HGLOBAL;
+    use windows::Win32::System::DataExchange::{CloseClipboard, EnumClipboardFormats, GetClipboardData};
+    use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
+    let mut out = Vec::new();
+    if !open_clipboard() {
+        return ClipboardCopy(out);
+    }
+    unsafe {
+        let mut total = 0usize;
+        let mut f = EnumClipboardFormats(0);
+        while f != 0 {
+            if !skip_format(f, &format_name(f)) {
+                if let Ok(h) = GetClipboardData(f) {
+                    let g = HGLOBAL(h.0);
+                    let p = GlobalLock(g) as *const u8;
+                    if !p.is_null() {
+                        let n = GlobalSize(g);
+                        if n > 0 && total + n <= 300 << 20 {
+                            out.push((f, std::slice::from_raw_parts(p, n).to_vec()));
+                            total += n;
+                        }
+                        let _ = GlobalUnlock(g);
+                    }
+                }
+            }
+            f = EnumClipboardFormats(f);
+        }
+        let _ = CloseClipboard();
+    }
+    ClipboardCopy(out)
+}
+
+pub fn clipboard_restore(c: &ClipboardCopy) {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, SetClipboardData};
+    use windows::Win32::Foundation::GlobalFree;
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+    if !open_clipboard() {
+        return;
+    }
+    unsafe {
+        let _ = EmptyClipboard();
+        for (f, bytes) in &c.0 {
+            let Ok(g) = GlobalAlloc(GMEM_MOVEABLE, bytes.len()) else { continue };
+            let p = GlobalLock(g) as *mut u8;
+            if p.is_null() {
+                let _ = GlobalFree(Some(g));
+                continue;
+            }
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
+            let _ = GlobalUnlock(g);
+            // on success the clipboard owns the memory
+            if SetClipboardData(*f, Some(HANDLE(g.0))).is_err() {
+                let _ = GlobalFree(Some(g));
+            }
+        }
+        let _ = CloseClipboard();
+    }
 }
 
 /// A tap on an unassigned key stops the foreground app from opening its menu bar when Alt is released.
@@ -233,8 +390,17 @@ pub fn trim_memory() {
 
 /// Returns false if another instance already holds the mutex.
 pub fn acquire_single_instance() -> bool {
+    // test copies with their own data folder run next to the user's copy
+    #[cfg(debug_assertions)]
+    if std::env::var("NORTEX_DATA_DIR").is_ok() {
+        return true;
+    }
     unsafe {
-        match CreateMutexW(None, true, w!("Local\\NortexAssistSingleton")) {
+        #[cfg(feature = "test-copy")]
+        let name = w!("Local\\NortexAssistTestCopy");
+        #[cfg(not(feature = "test-copy"))]
+        let name = w!("Local\\NortexAssistSingleton");
+        match CreateMutexW(None, true, name) {
             Ok(handle) => {
                 if GetLastError() == ERROR_ALREADY_EXISTS {
                     // let go of it, so the name disappears once the other instance exits (see the update restart)
@@ -250,6 +416,11 @@ pub fn acquire_single_instance() -> bool {
 }
 
 pub fn set_autostart(enabled: bool) -> Result<(), String> {
+    // the test copy must not touch the autostart entry of the installed program
+    if cfg!(feature = "test-copy") {
+        let _ = enabled;
+        return Ok(());
+    }
     use winreg::{enums::HKEY_CURRENT_USER, RegKey};
     const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
     const NAME: &str = "NortexAssist";
@@ -312,4 +483,103 @@ pub fn run_detached(script: &str) {
         .raw_arg(format!("/d /s /c \"{script}\""))
         .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
         .spawn();
+}
+
+/// Windows' own "app mode" colour (Settings → Personalisation → Colours): true for dark.
+pub fn windows_dark() -> bool {
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+    RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+        .and_then(|k| k.get_value::<u32, _>("AppsUseLightTheme"))
+        .map(|light| light == 0)
+        .unwrap_or(true)
+}
+
+/// True when the Windows display language is English (any country).
+pub fn windows_english() -> bool {
+    let id = unsafe { windows::Win32::Globalization::GetUserDefaultUILanguage() };
+    id & 0x3ff == 0x09
+}
+
+/// Code editors copy the whole current line on Ctrl+C when nothing is selected. They mark such a
+/// copy in the clipboard: VS Code (and other Electron editors) with `"isFromEmptySelection":true`
+/// in its editor data, Visual Studio with an extra format. Call right after the copy.
+pub fn clipboard_is_line_copy() -> bool {
+    use windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW};
+    use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
+    use windows::Win32::Foundation::HGLOBAL;
+    unsafe {
+        let fmt = |name: &str| {
+            let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+            RegisterClipboardFormatW(windows::core::PCWSTR(wide.as_ptr()))
+        };
+        for vs in ["MSDEVLineSelect", "VisualStudioEditorOperationsLineCutCopyClipboardTag"] {
+            if IsClipboardFormatAvailable(fmt(vs)).is_ok() {
+                return true;
+            }
+        }
+        let editor_formats = [fmt("vscode-editor-data"), fmt("Chromium Web Custom MIME Data Format")];
+        let mut opened = false;
+        for _ in 0..10 {
+            if OpenClipboard(None).is_ok() {
+                opened = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(15));
+        }
+        if !opened {
+            return false;
+        }
+        let mut found = false;
+        for f in editor_formats {
+            if f == 0 || IsClipboardFormatAvailable(f).is_err() {
+                continue;
+            }
+            let Ok(h) = GetClipboardData(f) else { continue };
+            let g = HGLOBAL(h.0);
+            let p = GlobalLock(g) as *const u8;
+            if p.is_null() {
+                continue;
+            }
+            let n = GlobalSize(g).min(1 << 20);
+            let bytes = std::slice::from_raw_parts(p, n);
+            found = has_empty_selection_flag(bytes);
+            let _ = GlobalUnlock(g);
+            if found {
+                break;
+            }
+        }
+        let _ = CloseClipboard();
+        found
+    }
+}
+
+/// Looks for `"isFromEmptySelection":true` written as UTF-8 or UTF-16 (Chromium keeps custom
+/// clipboard types as UTF-16).
+fn has_empty_selection_flag(bytes: &[u8]) -> bool {
+    let utf8: String = String::from_utf8_lossy(bytes).chars().filter(|c| !c.is_whitespace() && *c != '\0').collect();
+    if utf8.contains("\"isFromEmptySelection\":true") {
+        return true;
+    }
+    let units: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+    let utf16: String = String::from_utf16_lossy(&units).chars().filter(|c| !c.is_whitespace()).collect();
+    utf16.contains("\"isFromEmptySelection\":true")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn line_copy_flag() {
+        let json = r#"{"version":1,"isFromEmptySelection": true,"mode":"rust"}"#;
+        assert!(super::has_empty_selection_flag(json.as_bytes()));
+        let wide: Vec<u8> = json.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+        assert!(super::has_empty_selection_flag(&wide));
+        assert!(!super::has_empty_selection_flag(br#"{"isFromEmptySelection":false}"#));
+    }
+}
+
+/// Is the numeric-keypad digit `d` held down right now? (The toolkit reports keypad digits like
+/// the ones above the letters, so the hotkey field asks Windows.)
+pub fn numpad_down(d: u32) -> bool {
+    d <= 9 && unsafe { GetAsyncKeyState(0x60 + d as i32) } < 0
 }

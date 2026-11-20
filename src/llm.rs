@@ -68,15 +68,6 @@ Formatting rules (they override any earlier instruction about plain text or Mark
 - Use - for bullet lists, 1. 2. 3. for steps, ## for section headings in long answers, **bold** for key terms and final results.
 - No tables, no images, no HTML.";
 
-/// Two-level answers: a short one first, the details behind the "more" button of the app.
-const TWO_LEVEL_NOTE: &str = "
-
-Answer in two levels:
-- First write the short answer exactly as the style above asks (the direct answer, as brief as possible).
-- Then, if there is something worth explaining (reasoning, solution steps, why other options are wrong, how the code works), write one line that contains only <<<MORE>>> and after it the detailed explanation. The user opens it by pressing a button.
-- If the short answer already says everything (a fact, a translation, a one-word reply), do not write <<<MORE>>> at all.
-- Never mention these levels or the marker in the text.";
-
 /// Used when the interface language is English: the answers are in English whatever the question's language.
 const ENGLISH_NOTE: &str = "
 
@@ -102,13 +93,8 @@ fn system_prompt(cfg: &Config, simple: bool) -> String {
     if simple {
         return format!("{base}{lang}");
     }
-    let mut p = format!("{base}{FORMAT_NOTE}");
-    if cfg.two_level_on() {
-        p.push_str(TWO_LEVEL_NOTE);
-    }
-    // last, so that nothing before it can override the language
-    p.push_str(lang);
-    p
+    // the language rule goes last, so that nothing before it can override it
+    format!("{base}{FORMAT_NOTE}{lang}")
 }
 
 const REJECT_NOTE: &str = "Your previous answer was wrong or not good enough. Reconsider the task carefully and answer again. Do not repeat the same answer unless you have checked that it is correct.";
@@ -138,7 +124,12 @@ pub struct Request {
     pub files: Vec<Attachment>,
     pub history: Vec<Turn>,
     pub rejected: Vec<String>,
+    /// the question (or the note to the selected text) was spoken: a speech transcription
+    pub voice: bool,
 }
+
+const VOICE_NOTE: &str = "(The user's words below were spoken and turned into text automatically; there may be recognition errors, so read them by their sense.)
+";
 
 /// API origin; debug builds can point it at a local mock server for testing.
 fn origin(env_name: &str, default: &str) -> String {
@@ -180,6 +171,7 @@ pub fn sanitize(r: &Request) -> Result<Request, String> {
         images: r.images.iter().take(4).filter(|i| !i.is_empty() && i.len() <= 40_000_000).cloned().collect(),
         history: r.history.iter().skip(skip(r.history.len(), 40)).map(|t| Turn { model: t.model, text: take_chars(&t.text, 12000) }).collect(),
         rejected: r.rejected.iter().skip(skip(r.rejected.len(), 3)).map(|t| take_chars(t, 12000)).collect(),
+        voice: r.voice,
     };
     if out.text.trim().is_empty() && out.images.is_empty() && out.files.is_empty() && out.extra.trim().is_empty() {
         return Err(crate::i18n::tr("Пустой запрос"));
@@ -209,6 +201,11 @@ fn mime_of(b64: &str) -> &'static str {
 }
 
 fn image_question(r: &Request) -> String {
+    let q = image_question_inner(r);
+    if r.voice { format!("{VOICE_NOTE}{q}") } else { q }
+}
+
+fn image_question_inner(r: &Request) -> String {
     let files = files_block(r);
     if r.images.is_empty() {
         let q = if r.extra.is_empty() { r.text.clone() } else { format!("{}
@@ -293,7 +290,41 @@ fn read_sse(resp: ureq::Response, cancel: &dyn Fn() -> bool, mut f: impl FnMut(&
     Ok(())
 }
 
-pub fn ask(cfg: &Config, req: &Request, on_chunk: &dyn Fn(&str), cancel: &dyn Fn() -> bool) -> Result<String, String> {
+/// A finished answer. `fallback` is set when Gemini answered instead of Groq, with the reason.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Reply {
+    pub text: String,
+    pub fallback: Option<Fallback>,
+}
+
+/// Why a Groq question went to Gemini (shown under the answer).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Fallback {
+    Limit,
+    Busy,
+    Images,
+}
+
+fn fallback_reason(e: &str) -> Fallback {
+    if re_is(r"не более трёх изображений|at most three images", e) {
+        Fallback::Images
+    } else if re_is(r"502|503|504|overload|temporarily unavailable", e) {
+        Fallback::Busy
+    } else {
+        Fallback::Limit
+    }
+}
+
+/// The answer came back empty because the model spent its whole size on thinking.
+const THOUGHT_TOO_LONG: &str = "\u{2063}thought-too-long";
+
+/// Groq errors after which the same question goes to Gemini: limits, a request too big for the
+/// account, an overloaded service, more pictures than Groq takes.
+fn groq_should_hand_over(e: &str) -> bool {
+    re_is(r"429|rate[_ ]limit|quota|too many requests|request too large|reduce max_tokens|502|503|504|overload|temporarily unavailable|не более трёх изображений|at most three images", e)
+}
+
+pub fn ask(cfg: &Config, req: &Request, on_chunk: &dyn Fn(&str), cancel: &dyn Fn() -> bool) -> Result<Reply, String> {
     let req = sanitize(req)?;
     let groq = cfg.is_groq();
     let started = Cell::new(false);
@@ -302,16 +333,32 @@ pub fn ask(cfg: &Config, req: &Request, on_chunk: &dyn Fn(&str), cancel: &dyn Fn
         on_chunk(t);
     };
     let mut cap: Option<u32> = None;
+    let mut think = true;
     for attempt in 1.. {
-        let res = if groq { groq_once(cfg, &req, cap, &cb, cancel) } else { gemini_once(cfg, &req, &cb, cancel) };
+        let res = if groq { groq_once(cfg, &req, cap, think, &cb, cancel) } else { gemini_once(cfg, &req, think, &cb, cancel) };
         match res {
-            Ok(a) => return Ok(a),
+            Ok(a) => return Ok(Reply { text: a, fallback: None }),
             Err(e) => {
+                // the long thinking used up the whole answer size and nothing was left for the answer
+                // itself: the same question again, answered straight away
+                if e == THOUGHT_TOO_LONG {
+                    if think && !cancel() {
+                        think = false;
+                        continue;
+                    }
+                    return Err(if groq { crate::i18n::tr("Groq вернул пустой ответ.") } else { crate::i18n::tr("Пустой ответ (MAX_TOKENS)") });
+                }
                 // Groq counts the requested output size against a per-minute limit of the account:
                 // when it says "request too large", ask again for a smaller answer
                 if groq && cap.is_none() && !started.get() && !cancel() && re_is(r"(?i)request too large|reduce max_tokens", &e) {
                     cap = Some(900);
                     continue;
+                }
+                // Groq is out of its limit: this one question goes to Gemini right away (with the
+                // pictures and the dialog), the next one is Groq's again
+                let hand_over = groq && !started.get() && !cancel() && groq_should_hand_over(&e);
+                if hand_over && !cfg.gemini_key.trim().is_empty() {
+                    return gemini_fallback(cfg, &req, fallback_reason(&e), on_chunk, cancel);
                 }
                 let retryable = if groq {
                     re_is(r"429|rate[_ ]limit|502|503|504|overload|temporarily unavailable", &e)
@@ -319,9 +366,56 @@ pub fn ask(cfg: &Config, req: &Request, on_chunk: &dyn Fn(&str), cancel: &dyn Fn
                     re_is(r"503|overload|high demand|unavailable", &e)
                 };
                 if cancel() || started.get() || !retryable || attempt >= 3 {
-                    return Err(explain_error(groq, &e));
+                    // no Gemini key to hand over to: say so, with a button that adds one
+                    return Err(if hand_over { no_fallback_text(&e) } else { explain_error(groq, &e) });
                 }
-                std::thread::sleep(Duration::from_millis(if groq { 1600 } else { 2000 }));
+                // Groq says how long to wait ("Please try again in 7.66s"); short waits are worth it
+                let wait = retry_after(&e).filter(|w| *w <= 20.0).map(|w| Duration::from_secs_f32(w + 0.3));
+                std::thread::sleep(wait.unwrap_or(Duration::from_millis(if groq { 1600 } else { 2000 })));
+            }
+        }
+    }
+    unreachable!()
+}
+
+/// "Please try again in 7.66s" / "in 1m2.5s" → seconds.
+fn retry_after(e: &str) -> Option<f32> {
+    let caps = Regex::new(r"(?i)try again in (?:(\d+)m)?(\d+(?:\.\d+)?)s").ok()?.captures(e)?;
+    let m: f32 = caps.get(1).and_then(|x| x.as_str().parse().ok()).unwrap_or(0.0);
+    let sec: f32 = caps.get(2)?.as_str().parse().ok()?;
+    Some(m * 60.0 + sec)
+}
+
+/// The marker the window looks for to offer the "add a Gemini key" button under an error.
+pub const NEED_GEMINI_KEY: &str = "\u{2063}gemini-key";
+
+fn no_fallback_text(e: &str) -> String {
+    format!("{}\n{}{NEED_GEMINI_KEY}", explain_error(true, e), crate::i18n::tr("Добавь ключ Gemini — тогда в такие моменты будет отвечать Gemini."))
+}
+
+/// Gemini with the model chosen for it in the settings (3.5 Flash-Lite by default), a couple of tries.
+fn gemini_fallback(cfg: &Config, req: &Request, why: Fallback, on_chunk: &dyn Fn(&str), cancel: &dyn Fn() -> bool) -> Result<Reply, String> {
+    let mut g = cfg.clone();
+    g.provider = "gemini".into();
+    if !g.model.trim().to_lowercase().starts_with("gemini-") {
+        g.model.clear(); // the default Gemini model
+    }
+    let started = Cell::new(false);
+    let cb = |t: &str| {
+        started.set(true);
+        on_chunk(t);
+    };
+    let mut think = true;
+    for attempt in 1.. {
+        match gemini_once(&g, req, think, &cb, cancel) {
+            Ok(a) => return Ok(Reply { text: a, fallback: Some(why) }),
+            Err(e) if e == THOUGHT_TOO_LONG && think && !cancel() => think = false,
+            Err(e) => {
+                let e = if e == THOUGHT_TOO_LONG { crate::i18n::tr("Пустой ответ (MAX_TOKENS)") } else { e };
+                if cancel() || started.get() || !re_is(r"503|overload|high demand|unavailable", &e) || attempt >= 2 {
+                    return Err(crate::i18n::trf("У Groq кончился лимит, а Gemini не ответила: {e}", &[("e", &explain_error(false, &e))]));
+                }
+                std::thread::sleep(Duration::from_millis(2000));
             }
         }
     }
@@ -367,7 +461,7 @@ fn timeout_for(deliberate: bool, simple: bool) -> Duration {
     Duration::from_secs(if deliberate { 90 } else if simple { 20 } else { 30 })
 }
 
-fn gemini_once(cfg: &Config, r: &Request, on_chunk: &dyn Fn(&str), cancel: &dyn Fn() -> bool) -> Result<String, String> {
+fn gemini_once(cfg: &Config, r: &Request, think: bool, on_chunk: &dyn Fn(&str), cancel: &dyn Fn() -> bool) -> Result<String, String> {
     if cfg.gemini_key.is_empty() {
         return Err(crate::i18n::tr("API-ключ не задан. Открой настройки."));
     }
@@ -377,7 +471,8 @@ fn gemini_once(cfg: &Config, r: &Request, on_chunk: &dyn Fn(&str), cancel: &dyn 
     }
     let detailed = wants_detail(cfg, r);
     let simple = cfg.overlay_mode && !detailed;
-    let deliberate = detailed || (!simple && !r.rejected.is_empty());
+    let deliberate = detailed;
+    let deep = deliberate && think;
 
     let mut parts = vec![json!({ "text": image_question(r) })];
     parts.extend(r.images.iter().map(|d| json!({ "inlineData": { "mimeType": mime_of(d), "data": d } })));
@@ -393,11 +488,12 @@ fn gemini_once(cfg: &Config, r: &Request, on_chunk: &dyn Fn(&str), cancel: &dyn 
     }
     // Gemini 3.x takes thinkingLevel; the 2.5 family uses thinkingBudget.
     let thinking = if model.starts_with("gemini-2.5-") {
-        json!({ "thinkingBudget": if deliberate { 4096 } else if model == "gemini-2.5-pro" { 128 } else { 0 } })
+        json!({ "thinkingBudget": if deep { 4096 } else if model == "gemini-2.5-pro" { 128 } else { 0 } })
     } else {
-        json!({ "thinkingLevel": if deliberate { "high" } else { "low" } })
+        json!({ "thinkingLevel": if deep { "high" } else { "low" } })
     };
-    let max_tokens = if simple { 512 } else if deliberate { 4096 } else { 2048 };
+    // with Gemini the thinking counts towards this size, so a deep answer gets more room
+    let max_tokens = if simple { 512 } else if deep { 8192 } else if deliberate { 4096 } else { 2048 };
     let body = json!({
         "systemInstruction": { "parts": [{ "text": system_prompt(cfg, simple) }] },
         "contents": contents,
@@ -439,6 +535,9 @@ fn gemini_once(cfg: &Config, r: &Request, on_chunk: &dyn Fn(&str), cancel: &dyn 
         Ok(())
     })?;
     let mut out = out.trim().to_string();
+    if out.is_empty() && reason == "MAX_TOKENS" && blocked.is_empty() {
+        return Err(THOUGHT_TOO_LONG.to_string());
+    }
     if out.is_empty() {
         let why = if !blocked.is_empty() { blocked } else if !reason.is_empty() { reason } else { crate::i18n::tr("нет вариантов") };
         return Err(crate::i18n::trf("Пустой ответ ({why})", &[("why", &why)]));
@@ -451,7 +550,7 @@ fn gemini_once(cfg: &Config, r: &Request, on_chunk: &dyn Fn(&str), cancel: &dyn 
 }
 
 /// `cap`: a smaller output limit, used after Groq refused the usual one for its per-minute token limit.
-fn groq_once(cfg: &Config, r: &Request, cap: Option<u32>, on_chunk: &dyn Fn(&str), cancel: &dyn Fn() -> bool) -> Result<String, String> {
+fn groq_once(cfg: &Config, r: &Request, cap: Option<u32>, think: bool, on_chunk: &dyn Fn(&str), cancel: &dyn Fn() -> bool) -> Result<String, String> {
     if cfg.groq_key.is_empty() {
         return Err(crate::i18n::tr("API-ключ Groq не задан. Открой настройки."));
     }
@@ -460,7 +559,8 @@ fn groq_once(cfg: &Config, r: &Request, cap: Option<u32>, on_chunk: &dyn Fn(&str
     }
     let detailed = wants_detail(cfg, r);
     let simple = cfg.overlay_mode && !detailed;
-    let deliberate = detailed || !r.rejected.is_empty();
+    let deliberate = detailed;
+    let another = !r.rejected.is_empty();
     let question = format!("{}\n\n{}", system_prompt(cfg, simple), image_question(r));
 
     let mut messages: Vec<Value> = r
@@ -485,12 +585,12 @@ fn groq_once(cfg: &Config, r: &Request, cap: Option<u32>, on_chunk: &dyn Fn(&str
         "messages": messages,
         "stream": true,
         "max_completion_tokens": cap.unwrap_or(if simple { 512 } else if deliberate { 4096 } else { 2048 }),
-        "temperature": if deliberate { 1.0 } else { 0.7 },
+        "temperature": if deliberate || another { 1.0 } else { 0.7 },
         "top_p": if deliberate { 0.95 } else { 0.80 },
-        "reasoning_effort": if deliberate { "high" } else { "none" },
+        "reasoning_effort": if deliberate && think { "high" } else { "none" },
         "reasoning_format": "hidden",
     });
-    if !deliberate {
+    if !deliberate && !another {
         body["presence_penalty"] = json!(1.5);
     }
 
@@ -523,6 +623,10 @@ fn groq_once(cfg: &Config, r: &Request, cap: Option<u32>, on_chunk: &dyn Fn(&str
         Ok(())
     })?;
     let mut answer = answer.trim().to_string();
+    if answer.is_empty() && deliberate && think {
+        // hidden thinking ate the whole size ("length"), or the model stopped after thinking only
+        return Err(THOUGHT_TOO_LONG.to_string());
+    }
     if answer.is_empty() {
         return Err(crate::i18n::tr("Groq вернул пустой ответ."));
     }
@@ -530,4 +634,16 @@ fn groq_once(cfg: &Config, r: &Request, cap: Option<u32>, on_chunk: &dyn Fn(&str
         answer.push_str(" …");
     }
     Ok(answer)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn groq_wait() {
+        assert_eq!(super::retry_after("Rate limit reached ... Please try again in 7.66s. Need more tokens?"), Some(7.66));
+        assert_eq!(super::retry_after("Please try again in 1m2.5s."), Some(62.5));
+        assert_eq!(super::retry_after("429"), None);
+        assert!(super::groq_should_hand_over("Rate limit reached for model"));
+        assert!(!super::groq_should_hand_over("invalid api key"));
+    }
 }

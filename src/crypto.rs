@@ -58,6 +58,19 @@ pub fn backup(file: &Path) {
 }
 
 impl Store {
+    /// Reads the store of another data folder without writing anything there (the test copy
+    /// takes the keys from the user's real settings this way).
+    #[cfg(feature = "test-copy")]
+    pub fn open_read_only(dir: &Path) -> Option<Store> {
+        let m = dpapi_unprotect(&std::fs::read(dir.join("master.bin")).ok()?).ok()?;
+        if m.len() < 32 {
+            return None;
+        }
+        let mut key = [0u8; 32];
+        Hkdf::<Sha256>::new(Some(b"nortex-master-v2"), &m).expand(b"aes-256-gcm", &mut key).ok()?;
+        Some(Store { key })
+    }
+
     pub fn open(dir: &Path) -> Result<Store, String> {
         let master_file = dir.join("master.bin");
         let mut master: Option<Vec<u8>> = None;

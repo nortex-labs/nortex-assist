@@ -1,10 +1,8 @@
-//! Turns the model's light Markdown into display blocks (headings, lists, code, formulas) and
-//! splits an answer into its short and detailed halves.
+//! Turns the model's light Markdown into display blocks (headings, lists, code, formulas).
 
-/// Written by the model between the short answer and the details (see `llm::TWO_LEVEL_NOTE`).
+/// Answers saved by versions before 1.4 may hold this marker between a short answer and its
+/// details; they are shown whole now, without it.
 pub const MORE_MARK: &str = "<<<MORE>>>";
-/// Details shorter than this (one line) are not worth a button.
-const TINY_DETAIL: usize = 60;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -26,40 +24,14 @@ pub struct Block {
     pub label: String,
 }
 
-/// Short and detailed parts of an answer. `detail` is `None` when the model gave only one level.
-pub fn split_levels(text: &str) -> (String, Option<String>) {
-    match text.find(MORE_MARK) {
-        Some(i) => {
-            let short = text[..i].trim().to_string();
-            let detail = text[i + MORE_MARK.len()..].trim().to_string();
-            // a one-line remark adds nothing the short answer lacks: no "show more" for it
-            let tiny = detail.chars().count() < TINY_DETAIL && !detail.contains('\n');
-            (short, if detail.is_empty() || tiny { None } else { Some(detail) })
-        }
-        None => {
-            // while streaming the marker may be half written: do not show "<<<MO" to the user
-            let t = text.trim_end();
-            let mut cut = t.len();
-            for n in (1..MORE_MARK.len()).rev() {
-                if t.is_char_boundary(t.len().saturating_sub(n)) && t.len() >= n && MORE_MARK.starts_with(&t[t.len() - n..]) {
-                    cut = t.len() - n;
-                    break;
-                }
-            }
-            (t[..cut].trim().to_string(), None)
-        }
-    }
-}
-
-/// The answer without the marker, for copying and for the chat history sent back to the model.
+/// The answer without the old "more" marker (answers from the history of earlier versions).
 pub fn without_mark(text: &str) -> String {
     match text.find(MORE_MARK) {
-        Some(_) => {
-            let (s, d) = split_levels(text);
-            match d {
-                Some(d) => format!("{s}\n\n{d}"),
-                None => s,
-            }
+        Some(i) => {
+            let (short, detail) = (text[..i].trim(), text[i + MORE_MARK.len()..].trim());
+            if detail.is_empty() { short.to_string() } else { format!("{short}
+
+{detail}") }
         }
         None => text.to_string(),
     }
@@ -78,21 +50,11 @@ fn plain_blocks(blocks: Vec<Block>) -> Vec<String> {
         .collect()
 }
 
-/// What the copy button puts on the clipboard: the short answer only, without any formatting marks.
-pub fn short_plain(text: &str) -> String {
-    let (short, _) = split_levels(text);
-    plain_blocks(parse(&short)).join("\n")
-}
-
-/// The answer as plain selectable text: the short part, and the details when they are open.
-pub fn plain_visible(text: &str, with_detail: bool) -> String {
-    let (short, detail) = split_levels(text);
-    let mut lines = plain_blocks(parse(&short));
-    if let (true, Some(d)) = (with_detail, detail) {
-        lines.push(String::new());
-        lines.extend(plain_blocks(parse(&d)));
-    }
-    lines.join("\n")
+/// The whole answer as plain text, without formatting marks: for the copy button and for
+/// selecting with the mouse.
+pub fn plain(text: &str) -> String {
+    plain_blocks(parse(&without_mark(text))).join("
+")
 }
 
 pub fn parse(text: &str) -> Vec<Block> {
@@ -260,7 +222,7 @@ fn escape_md(s: &str) -> String {
 }
 
 /// Markdown for the `StyledText` element: bold terms get the accent colour, `$...$` becomes text.
-pub fn inline_markdown(s: &str, accent: &str) -> String {
+pub fn inline_markdown(s: &str, _accent: &str) -> String {
     // formulas first, so their symbols are not read as Markdown
     let mut text = String::new();
     let mut rest = s;
@@ -279,7 +241,7 @@ pub fn inline_markdown(s: &str, accent: &str) -> String {
         }
     }
     text.push_str(rest);
-    // **term** -> bold accent-coloured term
+    // **term** -> bold term (no colour: the accent is only for small things)
     let mut out = String::new();
     let mut parts = text.split("**");
     if let Some(first) = parts.next() {
@@ -288,7 +250,7 @@ pub fn inline_markdown(s: &str, accent: &str) -> String {
     let mut open = true;
     for p in parts {
         if open && !p.is_empty() && !p.contains('\n') {
-            out.push_str(&format!("<font color=\"{accent}\">**{p}**</font>"));
+            out.push_str(&format!("**{p}**"));
         } else {
             out.push_str(p);
         }
@@ -503,27 +465,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn splits_two_levels() {
-        let (s, d) = split_levels("Ответ: 5\n<<<MORE>>>\nПотому что 2+3.\nВторая строка.");
-        assert_eq!(s, "Ответ: 5");
-        assert_eq!(d.as_deref(), Some("Потому что 2+3.\nВторая строка."));
-        let (s, d) = split_levels("Ответ: 5\n<<<MO");
-        assert_eq!(s, "Ответ: 5");
-        assert!(d.is_none());
-        assert_eq!(without_mark("A\n<<<MORE>>>\nB\nC"), "A\n\nB\nC");
-    }
+    fn old_marker_is_dropped() {
+        assert_eq!(without_mark("A
+<<<MORE>>>
+B
+C"), "A
 
-    #[test]
-    fn tiny_details_get_no_button() {
-        let (s, d) = split_levels("Paris
+B
+C");
+        assert_eq!(without_mark("A
 <<<MORE>>>
-Paris is the capital of France.");
-        assert_eq!(s, "Paris");
-        assert!(d.is_none());
-        let long = "Хотя Сидней и Мельбурн самые крупные города, столицей является Канберра, построенная как компромисс.";
-        assert!(split_levels(&format!("B
+"), "A");
+        assert_eq!(plain("**Ответ:** 5
 <<<MORE>>>
-{long}")).1.is_some());
+1. шаг"), "Ответ: 5
+1. шаг");
     }
 
     #[test]

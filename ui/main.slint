@@ -1,62 +1,78 @@
-import { ComboBox, ScrollView, ListView, TextEdit, Palette } from "std-widgets.slint";
+import { ScrollView, ListView, TextEdit, Palette } from "std-widgets.slint";
 
 export struct ThumbItem { img: image }
 export struct HistItem { title: string, sub: string }
 // one piece of an answer: kind 0 paragraph, 1 heading, 2 bullet, 3 numbered, 4 quote, 5 code, 6 formula
 export struct BlockItem { kind: int, text: string, rich: styled-text, label: string }
 export struct FileItem { name: string, info: string, folder: bool }
+// One question and its answer in the dialog. `open` false: folded to one line (older turns).
+// `action`: a button under an error ("gemini-key", "mic", "settings"), `action-text` its caption.
+export struct FeedItem {
+    q: string,
+    shots: int,
+    // names of the files sent with the question
+    files: string,
+    blocks: [BlockItem],
+    note: string,
+    error: bool,
+    action: string,
+    action-text: string,
+    open: bool,
+    preview: string,
+    waiting: bool,
+}
+// hint of the empty window: keycaps and what they do
+export struct HintRow { keys: [string], text: string }
+// a hotkey in the settings; `warn` is a soft remark, `bad` makes it red
+export struct KeyRow { slot: int, label: string, keys: [string], warn: string, bad: bool }
+export struct NewsItem { tag: int, text: string }
+export struct NewsVersion { version: string, date: string, items: [NewsItem] }
+export struct ActionItem { label: string, prompt: string }
+// a button under the answer: kind 0 explain, 1 shorter, 2 translate, 3 own
+export struct ActionBtn { label: string, kind: int }
 
 export global Theme {
     in property <bool> dark: true;
-    in property <string> accent-name: "green";
+    in property <string> accent-name: "violet";
     // the user's own accent (accent-name "custom") and a readable ink on top of it; set from Rust
-    in property <color> custom-accent: #4fd1c5;
-    in property <color> custom-ink: #151515;
+    in property <color> custom-accent: #8b7cf6;
+    in property <color> custom-ink: #ffffff;
 
-    out property <color> window: dark ? #0e1012 : #f8f9f4;
-    out property <color> surface: dark ? #131619 : #ffffff;
-    out property <color> raised: dark ? #191d20 : #f2f4ee;
-    out property <color> field: dark ? #0c0f10 : #ffffff;
-    out property <color> fg: dark ? #f0f2ec : #20251e;
-    out property <color> muted: dark ? #8b928c : #72796f;
-    out property <color> subtle: dark ? #626a64 : #8c9389;
-    out property <color> line: dark ? #e6ede116 : #1a211619;
-    out property <color> line-strong: dark ? #e6ede126 : #1a211629;
-    out property <color> danger: dark ? #ff8179 : #d65350;
+    // neutral graphite (dark) and light grey (light); the accent is only for small things
+    out property <color> window: dark ? #1b1c20 : #f5f5f7;
+    out property <color> surface: dark ? #222328 : #ffffff;
+    out property <color> raised: dark ? #2a2b31 : #ebebef;
+    out property <color> field: dark ? #25262b : #ffffff;
+    out property <color> fg: dark ? #ececf0 : #1c1c21;
+    out property <color> muted: dark ? #a3a4ae : #5e5f69;
+    out property <color> subtle: dark ? #8a8b95 : #6f707a;
+    out property <color> line: dark ? #ffffff12 : #0000001a;
+    out property <color> line-strong: dark ? #ffffff22 : #0000002b;
+    out property <color> hover: dark ? #ffffff0d : #0000000a;
+    out property <color> danger: dark ? #f07a74 : #c9433e;
+    out property <color> ok: dark ? #5fcf8e : #23955a;
+    out property <color> warn: dark ? #e7b25c : #a86d12;
     out property <color> accent: accent-of(accent-name, dark);
-    out property <color> accent-ink: accent-ink-of(accent-name);
-    out property <color> accent-soft: accent.with-alpha(0.14);
+    out property <color> accent-ink: accent-ink-of(accent-name, dark);
+    out property <color> accent-soft: accent.with-alpha(dark ? 0.16 : 0.12);
     // accent used for text and small icons: the light theme needs a darker shade to stay readable
-    out property <color> accent-text: dark ? accent : accent-text-of(accent-name);
+    out property <color> accent-text: dark ? accent.brighter(0.12) : accent.darker(0.15);
 
     public pure function accent-of(name: string, d: bool) -> color {
         if (name == "custom") { return custom-accent; }
-        if (name == "pink") { return d ? #fa8bc8 : #d94d99; }
-        if (name == "blue") { return d ? #84b8ff : #4d83d4; }
-        if (name == "red") { return d ? #ff8179 : #d65350; }
-        if (name == "orange") { return d ? #ffb26b : #c87827; }
-        if (name == "violet") { return d ? #b69bff : #805fc8; }
-        return d ? #d3f178 : #a9cd5b;
+        if (name == "blue") { return d ? #6aa2f5 : #2f6fd0; }
+        if (name == "green") { return d ? #56c48c : #1f8f57; }
+        if (name == "pink") { return d ? #e27bbd : #bf4593; }
+        if (name == "orange") { return d ? #eda35e : #bf6b1c; }
+        if (name == "red") { return d ? #ee7470 : #c9433e; }
+        if (name == "graphite") { return d ? #c4c5cc : #4f5059; }
+        return d ? #8f80f7 : #6a57e3;
     }
 
-    pure function accent-ink-of(name: string) -> color {
+    pure function accent-ink-of(name: string, d: bool) -> color {
         if (name == "custom") { return custom-ink; }
-        if (name == "pink") { return #24131e; }
-        if (name == "blue") { return #101a29; }
-        if (name == "red") { return #291312; }
-        if (name == "orange") { return #25180d; }
-        if (name == "violet") { return #1a1530; }
-        return #161b0d;
-    }
-
-    pure function accent-text-of(name: string) -> color {
-        if (name == "custom") { return custom-accent.darker(0.35); }
-        if (name == "pink") { return #b83b80; }
-        if (name == "blue") { return #3567b3; }
-        if (name == "red") { return #b83c39; }
-        if (name == "orange") { return #9a5a17; }
-        if (name == "violet") { return #6545ad; }
-        return #5f8420;
+        if (name == "graphite" && d) { return #1b1c20; }
+        return #ffffff;
     }
 }
 
@@ -85,7 +101,7 @@ component TipArea inherits TouchArea {
         }
     }
     Timer {
-        interval: 1500ms;
+        interval: 1200ms;
         running: root.has-hover && !root.done && root.tip != "";
         triggered => {
             root.done = true;
@@ -105,43 +121,25 @@ component Panel inherits Rectangle {
     opacity: shown ? 1 : 0;
     animate opacity { duration: 170ms; easing: ease-out; }
     VerticalLayout {
-        y: root.shown ? 0px : 8px;
+        y: root.shown ? 0px : 6px;
         height: parent.height;
         animate y { duration: 200ms; easing: ease-out; }
         @children
     }
 }
 
-// Logo and name in the empty toolbar of a fresh window; fades in.
-component Brand inherits HorizontalLayout {
-    property <bool> shown: false;
-    Timer { interval: 16ms; running: !root.shown; triggered => { root.shown = true; } }
-    spacing: 7px;
-    padding-left: 4px;
-    // the app icon redrawn in the accent colour: a rounded square with a soft gradient and dark sparkles
-    Rectangle {
-        width: 18px;
-        height: 18px;
-        y: (parent.height - self.height) / 2;
-        // solid accent (rounded corners only work on plain fills) under a light-to-shade sheen picture
-        border-radius: 5px;
-        background: Theme.accent;
-        opacity: root.shown ? 1 : 0;
-        animate opacity { duration: 200ms; easing: ease-out; }
-        Image { source: @image-url("icons/sheen.svg"); width: parent.width; height: parent.height; }
-        Image {
-            source: @image-url("icons/spark.svg");
-            width: parent.width;
-            height: parent.height;
-            colorize: Theme.accent-ink;
-        }
-    }
-    HorizontalLayout {
-        spacing: 4px;
-        opacity: root.shown ? 1 : 0;
-        animate opacity { duration: 200ms; easing: ease-out; }
-        Text { text: "Nortex"; color: Theme.fg; font-size: 13px; font-weight: 600; vertical-alignment: center; }
-        Text { text: "Assist"; color: Theme.accent-text; font-size: 13px; font-weight: 600; vertical-alignment: center; }
+// The logo: a rounded accent square with two sparkles.
+component Logo inherits Rectangle {
+    in property <length> size: 16px;
+    width: size;
+    height: size;
+    border-radius: size * 0.28;
+    background: Theme.accent;
+    Image {
+        source: @image-url("icons/spark.svg");
+        width: parent.width;
+        height: parent.height;
+        colorize: Theme.accent-ink;
     }
 }
 
@@ -149,23 +147,39 @@ component IconButton inherits Rectangle {
     in property <image> icon;
     in property <bool> active: false;
     in property <bool> enabled: true;
+    in property <bool> dot: false;
     in property <string> tip;
+    in property <length> icon-size: 16px;
     callback clicked();
     width: 28px;
     height: 28px;
-    border-radius: 8px;
-    background: !enabled ? transparent : ta.pressed ? Theme.line-strong : active ? Theme.accent-soft : ta.has-hover ? Theme.line : transparent;
+    accessible-role: button;
+    accessible-label: root.tip;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if (root.enabled) { root.clicked(); } }
+    border-radius: 7px;
+    background: !enabled ? transparent : ta.pressed ? Theme.line-strong : active ? Theme.accent-soft : ta.has-hover ? Theme.hover : transparent;
     animate background { duration: 140ms; }
-    img := Image {
+    Image {
         source: root.icon;
-        // a small "press" squeeze
-        width: ta.pressed ? 12px : 14px;
+        width: ta.pressed ? root.icon-size - 2px : root.icon-size;
         height: self.width;
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         colorize: !root.enabled ? Theme.subtle : root.active ? Theme.accent-text : ta.has-hover ? Theme.fg : Theme.muted;
         animate width { duration: 90ms; easing: ease-out; }
         animate colorize { duration: 160ms; }
+    }
+    // small notification dot (a new option in the settings)
+    if root.dot: Rectangle {
+        x: parent.width - 9px;
+        y: 4px;
+        width: 7px;
+        height: 7px;
+        border-radius: 3.5px;
+        background: Theme.accent;
+        border-width: 1.5px;
+        border-color: Theme.window;
     }
     ta := TipArea {
         tip: root.tip;
@@ -175,31 +189,105 @@ component IconButton inherits Rectangle {
     }
 }
 
-component ActionButton inherits Rectangle {
+// Drawn key ("Alt", "Q", "F8").
+component Keycap inherits Rectangle {
+    in property <string> text;
+    in property <bool> lit: false;
+    width: max(24px, kt.preferred-width + 14px);
+    height: 22px;
+    border-radius: 6px;
+    background: lit ? Theme.accent-soft : Theme.raised;
+    border-width: 1px;
+    border-color: lit ? Theme.accent.with-alpha(0.6) : Theme.line-strong;
+    // a slightly thicker bottom edge, like a real key
+    Rectangle {
+        y: parent.height - 2px;
+        height: 2px;
+        width: parent.width - 6px;
+        border-radius: 1px;
+        background: Theme.line;
+    }
+    kt := Text {
+        text: root.text;
+        color: root.lit ? Theme.accent-text : Theme.fg;
+        font-size: 12px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// Keycaps joined with "+".
+component KeyCombo inherits HorizontalLayout {
+    in property <[string]> keys;
+    in property <bool> lit: false;
+    spacing: 4px;
+    alignment: start;
+    for k[i] in root.keys: HorizontalLayout {
+        spacing: 4px;
+        if i > 0: Text { text: "+"; color: Theme.subtle; font-size: 12px; vertical-alignment: center; }
+        Keycap { text: k; lit: root.lit; }
+    }
+}
+
+component Button inherits Rectangle {
     in property <string> text;
     in property <bool> primary: false;
+    in property <bool> danger: false;
+    in property <bool> enabled: true;
     in property <string> tip;
     callback clicked();
-    height: 30px;
-    min-width: 70px;
+    height: 32px;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if (root.enabled) { root.clicked(); } }
+    width: max(64px, bl.preferred-width + 28px);
     border-radius: 8px;
     border-width: primary ? 0px : 1px;
-    border-color: ta.has-hover ? Theme.muted.with-alpha(0.5) : Theme.line-strong;
-    background: primary
-        ? (ta.pressed ? Theme.accent.darker(0.2) : ta.has-hover ? Theme.accent.brighter(0.08) : Theme.accent)
-        : (ta.pressed ? Theme.line-strong : ta.has-hover ? Theme.line : transparent);
+    border-color: danger ? Theme.danger.with-alpha(0.6) : ta.has-hover ? Theme.subtle : Theme.line-strong;
+    background: !enabled ? transparent
+        : primary ? (ta.pressed ? Theme.accent.darker(0.15) : ta.has-hover ? Theme.accent.brighter(0.06) : Theme.accent)
+        : (ta.pressed ? Theme.line-strong : ta.has-hover ? Theme.hover : transparent);
+    opacity: enabled ? 1 : 0.5;
     animate background, border-color { duration: 140ms; }
-    HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
-        Text {
-            text: root.text;
-            color: root.primary ? Theme.accent-ink : Theme.fg;
-            font-size: 12px;
-            font-weight: 600;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
+    bl := Text {
+        text: root.text;
+        color: root.primary ? Theme.accent-ink : root.danger ? Theme.danger : Theme.fg;
+        font-size: 12px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    ta := TipArea {
+        tip: root.tip;
+        enabled: root.enabled;
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Rounded "pill" button under the answer ("Объясни", "Короче"...).
+component Pill inherits Rectangle {
+    in property <string> text;
+    in property <string> tip;
+    callback clicked();
+    height: 28px;
+    width: pl.preferred-width + 20px;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => { root.clicked(); }
+    border-radius: 14px;
+    border-width: 1px;
+    border-color: ta.has-hover ? Theme.subtle : Theme.line-strong;
+    background: ta.pressed ? Theme.line-strong : ta.has-hover ? Theme.hover : transparent;
+    animate background, border-color { duration: 140ms; }
+    pl := Text {
+        text: root.text;
+        color: Theme.fg;
+        font-size: 12px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
     }
     ta := TipArea {
         tip: root.tip;
@@ -208,62 +296,110 @@ component ActionButton inherits Rectangle {
     }
 }
 
-// Destructive action: the first click arms it, the second (within 3 s) confirms.
-component ConfirmButton inherits Rectangle {
+// A button under the answer: just a picture; under the pointer it slides open with its word.
+// It keeps its own 30px place: the word opens over the neighbours (to the left for the buttons
+// on the right edge), so nothing moves away from under the pointer.
+component ActionChip inherits Rectangle {
+    in property <image> icon;
     in property <string> text;
-    in property <string> confirm-text: @tr("Точно удалить?");
-    callback confirmed();
-    property <bool> armed: false;
+    in property <bool> active: false;
+    // false: an active state is shown by colour only (a lasting mode would cover its neighbour)
+    in property <bool> open-when-active: true;
+    in property <bool> grow-left: false;
+    callback clicked();
+    property <bool> open: ta.has-hover || (root.active && root.open-when-active);
+    property <length> pill-w: root.open ? cl.preferred-width + 40px : 30px;
+    width: 30px;
     height: 30px;
-    min-width: 70px;
-    border-radius: 8px;
-    border-width: 1px;
-    border-color: armed ? Theme.danger : ta.has-hover ? Theme.muted.with-alpha(0.5) : Theme.line-strong;
-    background: armed ? Theme.danger.with-alpha(0.14) : (ta.has-hover ? Theme.line : transparent);
-    animate background, border-color { duration: 160ms; }
-    HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
-        Text {
-            text: root.armed ? root.confirm-text : root.text;
-            color: root.armed ? Theme.danger : Theme.fg;
+    z: root.open ? 2 : 0;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => { root.clicked(); }
+    pill := Rectangle {
+        x: root.grow-left ? root.width - self.width : 0px;
+        y: 0px;
+        width: root.pill-w;
+        height: root.height;
+        animate width { duration: 170ms; easing: ease-out; }
+        border-radius: 15px;
+        background: ta.pressed ? Theme.line-strong : root.open ? Theme.raised : root.active ? Theme.accent-soft : transparent;
+        animate background { duration: 140ms; }
+        clip: true;
+        Image {
+            x: root.grow-left ? parent.width - 23px : 7px;
+            y: 7px;
+            width: 16px;
+            height: 16px;
+            source: root.icon;
+            colorize: root.active ? Theme.accent-text : root.open ? Theme.fg : Theme.muted;
+            animate colorize { duration: 140ms; }
+        }
+        cl := Text {
+            x: root.grow-left ? 11px : 29px;
+            height: parent.height;
+            text: root.text;
+            color: root.active ? Theme.accent-text : Theme.fg;
             font-size: 12px;
-            font-weight: 600;
-            horizontal-alignment: center;
             vertical-alignment: center;
-            animate color { duration: 160ms; }
+            opacity: root.open ? 1 : 0;
+            animate opacity { duration: 150ms; }
         }
     }
-    ta := TipArea {
-        tip: @tr("Удаляет со второго нажатия, чтобы не стереть случайно");
+    // only the chip's own place reacts, so the neighbour under an opened word stays reachable
+    ta := TouchArea {
         mouse-cursor: MouseCursor.pointer;
-        clicked => {
-            if (root.armed) {
-                root.armed = false;
-                root.confirmed();
-            } else {
-                root.armed = true;
-            }
-        }
-    }
-    Timer {
-        interval: 3s;
-        running: root.armed;
-        triggered => { root.armed = false; }
+        clicked => { root.clicked(); }
     }
 }
 
-// Small text link used in the settings.
+// Small text link.
 component LinkText inherits Text {
     in property <string> tip;
     callback clicked();
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => { root.clicked(); }
     color: lta.has-hover ? Theme.fg : Theme.accent-text;
     animate color { duration: 140ms; }
-    font-size: 11px;
+    font-size: 12px;
     lta := TipArea {
         tip: root.tip;
         mouse-cursor: MouseCursor.pointer;
         clicked => { root.clicked(); }
+    }
+}
+
+// On / off switch.
+component Toggle inherits Rectangle {
+    in-out property <bool> checked;
+    callback toggled(bool);
+    width: 36px;
+    height: 20px;
+    accessible-role: switch;
+    accessible-checkable: true;
+    accessible-checked: root.checked;
+    accessible-action-default => {
+        root.checked = !root.checked;
+        root.toggled(root.checked);
+    }
+    border-radius: 10px;
+    background: checked ? Theme.accent : Theme.line-strong;
+    animate background { duration: 160ms; }
+    Rectangle {
+        width: 14px;
+        height: 14px;
+        y: 3px;
+        x: root.checked ? parent.width - self.width - 3px : 3px;
+        border-radius: 7px;
+        background: root.checked ? Theme.accent-ink : Theme.dark ? #d8d8de : #ffffff;
+        animate x { duration: 160ms; easing: ease-out; }
+    }
+    TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => {
+            root.checked = !root.checked;
+            root.toggled(root.checked);
+        }
     }
 }
 
@@ -275,20 +411,18 @@ component Segmented inherits Rectangle {
     callback picked(int);
     property <length> seg-w: (self.width - 6px) / max(1, root.items.length);
     height: 32px;
-    border-radius: 9px;
-    background: Theme.field;
-    border-width: 1px;
-    border-color: Theme.line;
+    border-radius: 8px;
+    background: Theme.raised;
     Rectangle {
         x: 3px + root.current * root.seg-w;
         y: 3px;
         width: root.seg-w;
         height: parent.height - 6px;
-        border-radius: 7px;
-        background: Theme.accent-soft;
-        border-width: 1px;
-        border-color: Theme.accent.with-alpha(0.45);
-        animate x { duration: 220ms; easing: ease-in-out; }
+        border-radius: 6px;
+        background: Theme.dark ? #3a3b42 : #ffffff;
+        drop-shadow-blur: 3px;
+        drop-shadow-color: #00000030;
+        animate x { duration: 200ms; easing: ease-in-out; }
     }
     for it[i] in root.items: Rectangle {
         x: 3px + i * root.seg-w;
@@ -299,7 +433,7 @@ component Segmented inherits Rectangle {
             text: it;
             font-size: 12px;
             font-weight: i == root.current ? 600 : 400;
-            color: i == root.current ? Theme.accent-text : sta.has-hover ? Theme.fg : Theme.muted;
+            color: i == root.current ? Theme.fg : sta.has-hover ? Theme.fg : Theme.muted;
             animate color { duration: 160ms; }
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -320,8 +454,11 @@ component Field inherits Rectangle {
     in-out property <string> text;
     in property <string> placeholder;
     in property <bool> password: false;
+    in property <length> font-size: 13px;
     callback edited();
     callback accepted();
+    callback focus-lost();
+    public function focus-it() { ti.focus(); }
     height: 32px;
     background: Theme.field;
     border-radius: 8px;
@@ -346,8 +483,7 @@ component Field inherits Rectangle {
             return reject;
         }
         // A bare TextInput never scrolls by itself, so a long line (an API key, a model name) ran
-        // out of the field and its end could not be seen. `cursor-position-changed` moves the
-        // Flickable to the cursor, the way the standard LineEdit does it.
+        // out of the field. `cursor-position-changed` moves the Flickable to the cursor.
         field-fl := Flickable {
             width: parent.width;
             height: parent.height;
@@ -361,10 +497,15 @@ component Field inherits Rectangle {
                 text <=> root.text;
                 input-type: root.password ? InputType.password : InputType.text;
                 color: Theme.fg;
-                font-size: 13px;
+                font-size: root.font-size;
                 single-line: true;
+                selection-background-color: Theme.accent.with-alpha(0.35);
+                selection-foreground-color: Theme.fg;
                 edited => { root.edited(); }
                 accepted => { root.accepted(); }
+                changed has-focus => {
+                    if (!self.has-focus) { root.focus-lost(); }
+                }
                 cursor-position-changed(cpos) => {
                     if (cpos.x + field-fl.content-x < 0px) {
                         field-fl.content-x = -cpos.x;
@@ -388,7 +529,7 @@ component Field inherits Rectangle {
         vertical-alignment: center;
         text: root.placeholder;
         color: Theme.subtle;
-        font-size: 13px;
+        font-size: root.font-size;
         overflow: TextOverflow.elide;
     }
     fta := TouchArea {
@@ -398,18 +539,31 @@ component Field inherits Rectangle {
     }
 }
 
-component HotkeyField inherits Rectangle {
-    in property <string> text;
+// A hotkey in the settings: drawn keys; a click waits for the new combination.
+component KeyCapture inherits Rectangle {
+    in property <[string]> keys;
+    in property <bool> bad: false;
     callback key(string, bool, bool, bool, bool);
     callback cancelled();
-    width: 140px;
-    height: 28px;
-    background: fs.has-focus ? Theme.accent-soft : Theme.field;
-    border-radius: 7px;
+    // waiting for keys starts / ends: the program's own hotkeys are switched off meanwhile,
+    // otherwise pressing one of them would run it instead of being recorded
+    callback started();
+    callback ended();
+    height: 30px;
+    // one width for every row, so the captions next to the keys line up
+    width: max(140px, kc.preferred-width + 16px);
+    border-radius: 8px;
+    background: fs.has-focus ? Theme.accent-soft : hta.has-hover ? Theme.hover : transparent;
     border-width: 1px;
-    border-color: fs.has-focus ? Theme.accent : hta.has-hover ? Theme.line-strong : Theme.line;
-    animate background, border-color { duration: 160ms; }
+    border-color: fs.has-focus ? Theme.accent : root.bad ? Theme.danger : hta.has-hover ? Theme.line-strong : transparent;
+    animate background, border-color { duration: 140ms; }
+    accessible-role: button;
+    accessible-label: @tr("Сменить сочетание клавиш");
+    accessible-action-default => { fs.focus(); }
     fs := FocusScope {
+        changed has-focus => {
+            if (self.has-focus) { root.started(); } else { root.ended(); }
+        }
         key-pressed(e) => {
             if (e.text == Key.Escape) {
                 root.cancelled();
@@ -418,61 +572,25 @@ component HotkeyField inherits Rectangle {
             root.key(e.text, e.modifiers.control, e.modifiers.alt, e.modifiers.shift, e.modifiers.meta);
             return accept;
         }
-        Text {
-            text: fs.has-focus ? @tr("нажми клавиши…") : root.text;
-            color: fs.has-focus ? Theme.accent-text : Theme.fg;
-            font-size: 12px;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
+    }
+    kc := KeyCombo {
+        x: 8px;
+        y: (parent.height - 22px) / 2;
+        height: 22px;
+        keys: root.keys;
+        opacity: fs.has-focus ? 0 : 1;
+    }
+    if fs.has-focus: Text {
+        text: @tr("нажми клавиши…");
+        color: Theme.accent-text;
+        font-size: 12px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
     }
     hta := TipArea {
-        tip: @tr("Нажми и зажми новое сочетание клавиш.\nEsc — отмена");
+        tip: @tr("Нажми, потом нажми новое сочетание.\nEsc — отмена");
         mouse-cursor: MouseCursor.pointer;
         clicked => { fs.focus(); }
-    }
-}
-
-component Check inherits Rectangle {
-    in-out property <bool> checked;
-    in property <string> label;
-    height: 26px;
-    HorizontalLayout {
-        spacing: 8px;
-        alignment: start;
-        Rectangle {
-            width: 16px;
-            height: 16px;
-            y: (parent.height - self.height) / 2;
-            border-radius: 5px;
-            border-width: 1px;
-            border-color: root.checked ? Theme.accent : cta.has-hover ? Theme.muted : Theme.line-strong;
-            background: root.checked ? Theme.accent : Theme.field;
-            animate background, border-color { duration: 160ms; }
-            Path {
-                width: 10px;
-                height: 10px;
-                x: 3px;
-                y: 3px;
-                viewbox-width: 12;
-                viewbox-height: 12;
-                commands: "M 2 6 L 5 9 L 10 3";
-                stroke: Theme.accent-ink;
-                stroke-width: 1.8px;
-                opacity: root.checked ? 1 : 0;
-                animate opacity { duration: 160ms; }
-            }
-        }
-        Text {
-            text: root.label;
-            color: Theme.fg;
-            font-size: 12px;
-            vertical-alignment: center;
-        }
-    }
-    cta := TouchArea {
-        mouse-cursor: MouseCursor.pointer;
-        clicked => { root.checked = !root.checked; }
     }
 }
 
@@ -481,13 +599,12 @@ component OpacitySlider inherits Rectangle {
     in property <float> minimum: 10;
     in property <float> maximum: 100;
     callback changed(float);
-    height: 22px;
+    height: 20px;
     function apply(x: length) {
         // the knob centre runs from 8px to width - 8px; whole percents only
         root.value = Math.round(Math.clamp(root.minimum + (x - 8px) / (root.width - 16px) * (root.maximum - root.minimum), root.minimum, root.maximum));
         root.changed(root.value);
     }
-    // children of a plain Rectangle are centred unless x is set, hence the explicit x: 0px
     Rectangle {
         x: 0px;
         y: (parent.height - self.height) / 2;
@@ -505,13 +622,14 @@ component OpacitySlider inherits Rectangle {
         background: Theme.accent;
     }
     Rectangle {
-        // the knob grows under the pointer
-        width: sta.has-hover || sta.pressed ? 18px : 16px;
+        width: sta.has-hover || sta.pressed ? 16px : 14px;
         height: self.width;
         x: (root.value - root.minimum) / (root.maximum - root.minimum) * (parent.width - 16px) + 8px - self.width / 2;
         y: (parent.height - self.height) / 2;
         border-radius: self.width / 2;
-        background: Theme.accent;
+        background: Theme.dark ? #ececf0 : #ffffff;
+        border-width: 1px;
+        border-color: Theme.line-strong;
         animate width { duration: 120ms; easing: ease-out; }
     }
     sta := TouchArea {
@@ -527,126 +645,38 @@ component OpacitySlider inherits Rectangle {
     }
 }
 
-// Slider that snaps to fixed steps; every step is marked and labelled ("12 px", "14 px", ...).
-component StepSlider inherits Rectangle {
+// "− 100 % +": steps through a list of values.
+component Stepper inherits HorizontalLayout {
     in property <[int]> steps;
-    in property <string> unit: " px";
+    in property <string> unit;
     in-out property <int> index;
     callback changed(int);
-    height: 40px;
-    property <length> pad: 16px;
-    property <length> span: root.width - 2 * root.pad;
-    property <int> last: Math.max(root.steps.length - 1, 1);
-    function pos(i: int) -> length {
-        return root.pad + root.span * i / root.last;
-    }
-    function apply(x: length) {
-        if (Math.round(Math.clamp((x - root.pad) / root.span * root.last, 0, root.last)) != root.index) {
-            root.index = Math.round(Math.clamp((x - root.pad) / root.span * root.last, 0, root.last));
+    spacing: 2px;
+    alignment: end;
+    IconButton {
+        icon: @image-url("icons/l-chevron-left.svg");
+        enabled: root.index > 0;
+        clicked => {
+            root.index = Math.max(0, root.index - 1);
             root.changed(root.index);
         }
     }
-    Rectangle {
-        x: root.pad;
-        y: 9px;
-        width: root.span;
-        height: 4px;
-        border-radius: 2px;
-        background: Theme.line-strong;
-    }
-    Rectangle {
-        x: root.pad;
-        y: 9px;
-        width: root.pos(root.index) - root.pad;
-        height: 4px;
-        border-radius: 2px;
-        background: Theme.accent;
-        animate width { duration: 120ms; easing: ease-out; }
-    }
-    // one notch per step
-    for v[i] in root.steps: Rectangle {
-        x: root.pos(i) - 4px;
-        y: 7px;
-        width: 8px;
-        height: 8px;
-        border-radius: 4px;
-        background: i <= root.index ? Theme.accent : Theme.line-strong;
-    }
-    for v[i] in root.steps: Text {
-        x: root.pos(i) - 24px;
-        y: 22px;
-        width: 48px;
-        horizontal-alignment: center;
-        text: v + root.unit;
-        font-size: 10px;
-        font-weight: i == root.index ? 700 : 400;
-        color: i == root.index ? Theme.accent-text : Theme.muted;
-    }
-    Rectangle {
-        width: sta.has-hover || sta.pressed ? 18px : 16px;
-        height: self.width;
-        x: root.pos(root.index) - self.width / 2;
-        y: 11px - self.height / 2;
-        border-radius: self.width / 2;
-        background: Theme.accent;
-        animate x { duration: 120ms; easing: ease-out; }
-        animate width { duration: 120ms; easing: ease-out; }
-    }
-    sta := TouchArea {
-        mouse-cursor: MouseCursor.pointer;
-        pointer-event(e) => {
-            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
-                root.apply(self.mouse-x);
-            }
-        }
-        moved => {
-            if (self.pressed) { root.apply(self.mouse-x); }
-        }
-    }
-}
-
-// What the game-overlay window looks like with a given text size (same paddings and corners).
-component OverlaySample inherits Rectangle {
-    in property <string> text;
-    in property <length> font;
-    width: st.preferred-width + 2 * root.font * 0.9 + 2px;
-    height: st.preferred-height + 2 * root.font * 0.55 + 2px;
-    animate width, height { duration: 120ms; easing: ease-out; }
-    background: Theme.window;
-    border-radius: Math.min(18px, root.font * 0.8);
-    border-width: 1px;
-    border-color: Theme.line-strong;
-    st := Text {
-        text: root.text;
+    Text {
+        text: (root.index < root.steps.length ? root.steps[root.index] : 0) + root.unit;
+        min-width: 52px;
         color: Theme.fg;
-        font-size: root.font;
-        font-weight: 500;
+        font-size: 12px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
     }
-}
-
-component Card inherits Rectangle {
-    in property <string> index;
-    in property <string> title;
-    background: Theme.surface;
-    border-radius: 12px;
-    border-width: 1px;
-    border-color: Theme.line;
-    VerticalLayout {
-        padding: 12px;
-        spacing: 8px;
-        HorizontalLayout {
-            spacing: 8px;
-            alignment: start;
-            Text { text: root.index; color: Theme.accent-text; font-size: 10px; font-weight: 700; vertical-alignment: center; }
-            Text { text: root.title; color: Theme.fg; font-size: 13px; font-weight: 600; }
+    IconButton {
+        icon: @image-url("icons/l-chevron-right.svg");
+        enabled: root.index < root.steps.length - 1;
+        clicked => {
+            root.index = Math.min(root.steps.length - 1, root.index + 1);
+            root.changed(root.index);
         }
-        @children
     }
-}
-
-component Label inherits Text {
-    color: Theme.muted;
-    font-size: 11px;
 }
 
 // Palette for the user's own accent colour: saturation/brightness square, hue strip, HEX/RGB field.
@@ -657,16 +687,11 @@ component AccentPicker inherits VerticalLayout {
     in-out property <string> text;
     callback picked(color);
     callback text-edited(string);
-    property <bool> shown: false;
-    Timer { interval: 16ms; running: !root.shown; triggered => { root.shown = true; } }
     spacing: 10px;
     padding-top: 4px;
-    opacity: root.shown ? 1 : 0;
-    animate opacity { duration: 180ms; easing: ease-out; }
 
-    // saturation grows to the right, brightness upwards
     Rectangle {
-        height: 120px;
+        height: 110px;
         Rectangle {
             border-radius: 8px;
             clip: true;
@@ -697,20 +722,18 @@ component AccentPicker inherits VerticalLayout {
             moved => { if (self.pressed) { self.apply(); } }
         }
     }
-
-    // hue
     Rectangle {
-        height: 14px;
+        height: 12px;
         Rectangle {
-            border-radius: 7px;
+            border-radius: 6px;
             background: @linear-gradient(90deg, #ff0000 0%, #ffff00 16.66%, #00ff00 33.33%, #00ffff 50%, #0000ff 66.66%, #ff00ff 83.33%, #ff0000 100%);
         }
         Rectangle {
-            width: 16px;
-            height: 16px;
-            x: root.h / 360 * (parent.width - 14px) + 7px - 8px;
+            width: 14px;
+            height: 14px;
+            x: root.h / 360 * (parent.width - 12px) + 6px - 7px;
             y: -1px;
-            border-radius: 8px;
+            border-radius: 7px;
             border-width: 2px;
             border-color: #ffffff;
             background: hsv(root.h, 1, 1);
@@ -718,7 +741,7 @@ component AccentPicker inherits VerticalLayout {
         TouchArea {
             mouse-cursor: MouseCursor.pointer;
             function apply() {
-                root.h = Math.clamp((self.mouse-x - 7px) / (self.width - 14px), 0, 1) * 359.9;
+                root.h = Math.clamp((self.mouse-x - 6px) / (self.width - 12px), 0, 1) * 359.9;
                 root.picked(hsv(root.h, root.s, root.v));
             }
             pointer-event(e) => {
@@ -727,7 +750,6 @@ component AccentPicker inherits VerticalLayout {
             moved => { if (self.pressed) { self.apply(); } }
         }
     }
-
     HorizontalLayout {
         spacing: 8px;
         Rectangle {
@@ -739,45 +761,32 @@ component AccentPicker inherits VerticalLayout {
         }
         Field {
             text <=> root.text;
-            placeholder: @tr("#4FD1C5 или 79, 209, 197");
+            placeholder: @tr("#8F80F7 или 143, 128, 247");
             edited => { root.text-edited(self.text); }
             accepted => { root.text-edited(self.text); }
         }
     }
-    Label { text: @tr("Двигай по палитре или впиши HEX (#4FD1C5) или RGB (79, 209, 197)."); font-size: 10px; wrap: TextWrap.word-wrap; }
 }
 
-// "Думаю" with three softly pulsing dots, shown until the first words of the answer arrive.
-// "Copy" chip of a code block: says "Скопировано" for a moment after the click.
-component CopyChip inherits Rectangle {
+// "Copy" icon of a code block: turns into a check for a moment after the click.
+component CopyIcon inherits Rectangle {
+    in property <string> tip: @tr("Копировать");
     callback clicked();
     property <bool> done: false;
-    width: chip-row.preferred-width + 14px;
-    height: 24px;
+    width: 26px;
+    height: 26px;
     border-radius: 7px;
-    background: cta.pressed ? Theme.line-strong : cta.has-hover ? Theme.line : transparent;
+    background: cta.pressed ? Theme.line-strong : cta.has-hover ? Theme.hover : transparent;
     animate background { duration: 140ms; }
-    Timer { interval: 1500ms; running: root.done; triggered => { root.done = false; } }
-    chip-row := HorizontalLayout {
-        padding-left: 7px;
-        padding-right: 8px;
-        spacing: 5px;
-        Image {
-            source: root.done ? @image-url("icons/check.svg") : @image-url("icons/copy.svg");
-            width: 12px;
-            height: 12px;
-            y: (parent.height - self.height) / 2;
-            colorize: root.done ? Theme.accent-text : cta.has-hover ? Theme.fg : Theme.muted;
-        }
-        Text {
-            text: root.done ? @tr("Скопировано") : @tr("Копировать код");
-            color: root.done ? Theme.accent-text : cta.has-hover ? Theme.fg : Theme.muted;
-            font-size: 11px;
-            vertical-alignment: center;
-        }
+    Timer { interval: 1400ms; running: root.done; triggered => { root.done = false; } }
+    Image {
+        source: root.done ? @image-url("icons/l-check.svg") : @image-url("icons/l-copy.svg");
+        width: 15px;
+        height: 15px;
+        colorize: root.done ? Theme.ok : cta.has-hover ? Theme.fg : Theme.muted;
     }
     cta := TipArea {
-        tip: @tr("Скопировать только этот код");
+        tip: root.tip;
         mouse-cursor: MouseCursor.pointer;
         clicked => { root.done = true; root.clicked(); }
     }
@@ -787,25 +796,24 @@ component CopyChip inherits Rectangle {
 component LangToggle inherits Rectangle {
     in property <bool> en;
     callback clicked();
-    width: 50px;
-    height: 24px;
+    width: 64px;
+    height: 26px;
     border-radius: 7px;
-    border-width: 1px;
-    border-color: lta2.has-hover ? Theme.muted.with-alpha(0.5) : Theme.line-strong;
-    animate border-color { duration: 140ms; }
+    background: Theme.raised;
     Rectangle {
-        x: root.en ? parent.width / 2 : 0px;
-        width: parent.width / 2;
-        height: parent.height;
-        border-radius: 6px;
-        background: Theme.accent-soft;
+        x: root.en ? parent.width / 2 + 1px : 3px;
+        y: 3px;
+        width: parent.width / 2 - 4px;
+        height: parent.height - 6px;
+        border-radius: 5px;
+        background: Theme.dark ? #3a3b42 : #ffffff;
         animate x { duration: 160ms; easing: ease-out; }
     }
     HorizontalLayout {
-        Text { text: "RU"; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; color: root.en ? Theme.muted : Theme.accent-text; }
-        Text { text: "EN"; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; color: root.en ? Theme.accent-text : Theme.muted; }
+        Text { text: "RU"; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; color: root.en ? Theme.muted : Theme.fg; }
+        Text { text: "EN"; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; color: root.en ? Theme.fg : Theme.muted; }
     }
-    lta2 := TipArea {
+    TipArea {
         tip: root.en ? "Switch to Russian" : "Switch to English";
         mouse-cursor: MouseCursor.pointer;
         clicked => { root.clicked(); }
@@ -818,36 +826,32 @@ component AnswerBlock inherits VerticalLayout {
     in property <float> scale: 1.0;
     in property <bool> first: false;
     callback copy-code(string);
-    padding-top: root.b.kind == 1 && !root.first ? 8px : 0px;
+    padding-top: root.b.kind == 1 && !root.first ? 6px : 0px;
 
     if root.b.kind == 0: StyledText {
         text: root.b.rich;
         default-color: Theme.fg;
         default-font-size: 14px * root.scale;
     }
-    if root.b.kind == 1: HorizontalLayout {
-        spacing: 9px;
-        Rectangle { width: 3px; border-radius: 2px; background: Theme.accent; }
-        Text {
-            text: root.b.text;
-            wrap: TextWrap.word-wrap;
-            color: Theme.fg;
-            font-weight: 700;
-            font-size: (root.b.label == "1" ? 19px : root.b.label == "2" ? 17px : 15px) * root.scale;
-        }
+    if root.b.kind == 1: Text {
+        text: root.b.text;
+        wrap: TextWrap.word-wrap;
+        color: Theme.fg;
+        font-weight: 700;
+        font-size: (root.b.label == "1" ? 18px : root.b.label == "2" ? 16px : 15px) * root.scale;
     }
     if root.b.kind == 2: HorizontalLayout {
         spacing: 6px;
-        padding-left: 4px;
+        padding-left: 2px;
         Rectangle {
             width: 12px;
             Rectangle {
                 x: 3px;
                 y: 8px * root.scale;
-                width: 6px;
-                height: 6px;
-                border-radius: 3px;
-                background: Theme.accent;
+                width: 5px;
+                height: 5px;
+                border-radius: 2.5px;
+                background: Theme.muted;
             }
         }
         StyledText {
@@ -858,12 +862,11 @@ component AnswerBlock inherits VerticalLayout {
     }
     if root.b.kind == 3: HorizontalLayout {
         spacing: 4px;
-        padding-left: 4px;
+        padding-left: 2px;
         Text {
             text: root.b.label;
             width: 22px * root.scale;
-            color: Theme.accent-text;
-            font-weight: 700;
+            color: Theme.muted;
             font-size: 14px * root.scale;
             horizontal-alignment: left;
             vertical-alignment: top;
@@ -877,7 +880,7 @@ component AnswerBlock inherits VerticalLayout {
     if root.b.kind == 4: HorizontalLayout {
         spacing: 10px;
         padding-left: 2px;
-        Rectangle { width: 3px; border-radius: 2px; background: Theme.line-strong; }
+        Rectangle { width: 3px; border-radius: 1.5px; background: Theme.line-strong; }
         StyledText {
             text: root.b.rich;
             default-color: Theme.muted;
@@ -885,31 +888,28 @@ component AnswerBlock inherits VerticalLayout {
         }
     }
     if root.b.kind == 5: Rectangle {
-        background: Theme.field;
+        background: Theme.dark ? #17181c : #f3f3f6;
         border-radius: 10px;
         border-width: 1px;
         border-color: Theme.line;
         VerticalLayout {
-            padding-bottom: 8px;
+            padding-bottom: 10px;
             HorizontalLayout {
                 padding-left: 12px;
-                padding-right: 6px;
-                padding-top: 6px;
-                CopyChip { clicked => { root.copy-code(root.b.text); } }
-                Rectangle { horizontal-stretch: 1; }
+                padding-right: 4px;
+                padding-top: 4px;
                 Text {
                     text: root.b.label == "" ? @tr("код") : root.b.label;
-                    color: Theme.subtle;
-                    font-size: 11px;
-                    font-weight: 600;
+                    color: Theme.muted;
+                    font-size: 12px;
                     vertical-alignment: center;
-                    horizontal-alignment: right;
+                    horizontal-stretch: 1;
                 }
+                CopyIcon { tip: @tr("Скопировать этот код"); clicked => { root.copy-code(root.b.text); } }
             }
             HorizontalLayout {
                 padding-left: 12px;
                 padding-right: 12px;
-                padding-top: 2px;
                 TextInput {
                     text: root.b.text;
                     read-only: true;
@@ -925,64 +925,19 @@ component AnswerBlock inherits VerticalLayout {
         }
     }
     if root.b.kind == 6: Rectangle {
-        background: Theme.accent-soft;
-        border-radius: 10px;
+        background: Theme.raised;
+        border-radius: 8px;
         HorizontalLayout {
-            padding: 10px;
-            padding-left: 14px;
-            padding-right: 14px;
+            padding: 8px;
+            padding-left: 12px;
+            padding-right: 12px;
             Text {
                 text: root.b.text;
                 wrap: TextWrap.word-wrap;
                 color: Theme.fg;
                 font-family: "Cambria Math";
-                font-size: 18px * root.scale;
-                horizontal-alignment: center;
-            }
-        }
-    }
-}
-
-// Pill under the short answer: opens and closes the detailed part.
-component MoreToggle inherits Rectangle {
-    in property <bool> expanded;
-    callback clicked();
-    height: 30px;
-    HorizontalLayout {
-        alignment: start;
-        Rectangle {
-            width: 128px;
-            border-radius: 15px;
-            border-width: 1px;
-            border-color: mta.has-hover ? Theme.accent : Theme.accent.with-alpha(0.45);
-            background: mta.pressed ? Theme.accent.with-alpha(0.25) : mta.has-hover ? Theme.accent-soft : transparent;
-            animate background, border-color { duration: 140ms; }
-            HorizontalLayout {
-                alignment: center;
-                spacing: 7px;
-                padding-left: 10px;
-                padding-right: 10px;
-                Text {
-                    text: root.expanded ? @tr("Свернуть") : @tr("Подробнее");
-                    color: Theme.accent-text;
-                    font-size: 12px;
-                    font-weight: 600;
-                    vertical-alignment: center;
-                }
-                Image {
-                    source: @image-url("icons/chevron.svg");
-                    width: 12px;
-                    height: 12px;
-                    y: (parent.height - self.height) / 2;
-                    colorize: Theme.accent-text;
-                    transform-rotation: root.expanded ? 180deg : 0deg;
-                    animate transform-rotation { duration: 200ms; easing: ease-out; }
-                }
-            }
-            mta := TipArea {
-                tip: root.expanded ? @tr("Оставить только короткий ответ") : @tr("Показать полное объяснение");
-                mouse-cursor: MouseCursor.pointer;
-                clicked => { root.clicked(); }
+                font-size: 17px * root.scale;
+                font-italic: true;
             }
         }
     }
@@ -990,17 +945,363 @@ component MoreToggle inherits Rectangle {
 
 component Thinking inherits HorizontalLayout {
     in property <length> size: 14px;
-    in property <color> color: Theme.fg;
+    in property <color> color: Theme.muted;
+    in property <string> text: @tr("Думаю");
     spacing: 3px;
     alignment: start;
-    Text { text: @tr("Думаю"); color: root.color; font-size: root.size; vertical-alignment: center; }
+    Text { text: root.text; color: root.color; font-size: root.size; vertical-alignment: center; }
     for i in [0, 1, 2]: Rectangle {
-        width: root.size * 0.32;
+        width: root.size * 0.3;
         height: self.width;
         y: (parent.height - self.height) / 2 + root.size * 0.22;
         border-radius: self.width / 2;
         background: root.color;
         opacity: 0.25 + 0.75 * Math.abs(Math.sin(animation-tick() / 1ms * 0.18deg - i * 50deg));
+    }
+}
+
+// Live sound level while recording: thin bars, the newest on the right.
+component Wave inherits Rectangle {
+    in property <[float]> levels;
+    in property <color> bar-color: Theme.accent;
+    min-height: 24px;
+    for l[i] in root.levels: Rectangle {
+        x: i * 5px;
+        width: 3px;
+        height: Math.max(3px, Math.min(1, l) * 22px);
+        y: (parent.height - self.height) / 2;
+        border-radius: 1.5px;
+        background: root.bar-color;
+        animate height { duration: 90ms; }
+    }
+}
+
+// Pulsing red recording dot.
+component RecDot inherits Rectangle {
+    width: 10px;
+    height: 10px;
+    border-radius: 5px;
+    background: #ef4b4b;
+    opacity: 0.45 + 0.55 * Math.abs(Math.sin(animation-tick() / 1ms * 0.2deg));
+}
+
+// Drop-down list in the colours of the app (the standard one marks the choice with Windows' own
+// colour and greys the chosen line out). `short`: what the closed field shows (optional).
+component Select inherits Rectangle {
+    in property <[string]> model;
+    in property <[string]> short;
+    in property <length> list-width: 0px;
+    in-out property <int> current-index;
+    callback selected(int);
+    property <string> shown: root.current-index >= 0 && root.current-index < root.short.length ? root.short[root.current-index]
+        : root.current-index >= 0 && root.current-index < root.model.length ? root.model[root.current-index] : "";
+    height: 32px;
+    border-radius: 8px;
+    background: sta.pressed ? Theme.line-strong : sta.has-hover ? Theme.hover : Theme.field;
+    border-width: 1px;
+    border-color: sta.has-hover ? Theme.subtle : Theme.line-strong;
+    animate background, border-color { duration: 140ms; }
+    accessible-role: combobox;
+    accessible-value: root.shown;
+    accessible-action-default => { popup.show(); }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 8px;
+        spacing: 6px;
+        Text { text: root.shown; color: Theme.fg; font-size: 12px; vertical-alignment: center; overflow: TextOverflow.elide; horizontal-stretch: 1; }
+        Image {
+            source: @image-url("icons/l-chevron-down.svg");
+            width: 14px;
+            height: 14px;
+            y: (parent.height - self.height) / 2;
+            colorize: Theme.muted;
+        }
+    }
+    sta := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { popup.show(); }
+    }
+    popup := PopupWindow {
+        property <length> w: max(root.width, root.list-width);
+        // opens under the field, its right edge on the field's right edge (it stays inside the window)
+        x: root.width - self.w;
+        y: root.height + 4px;
+        width: self.w;
+        Rectangle {
+            background: Theme.surface;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.line-strong;
+            drop-shadow-blur: 14px;
+            drop-shadow-color: #00000050;
+            VerticalLayout {
+                padding: 4px;
+                spacing: 1px;
+                for it[i] in root.model: Rectangle {
+                    height: 30px;
+                    border-radius: 6px;
+                    background: ita.has-hover ? Theme.hover : i == root.current-index ? Theme.accent-soft : transparent;
+                    if i == root.current-index: Rectangle {
+                        x: 3px;
+                        y: (parent.height - self.height) / 2;
+                        width: 3px;
+                        height: 14px;
+                        border-radius: 1.5px;
+                        background: Theme.accent;
+                    }
+                    Text {
+                        x: 12px;
+                        width: parent.width - 18px;
+                        height: parent.height;
+                        text: it;
+                        color: Theme.fg;
+                        font-size: 12px;
+                        font-weight: i == root.current-index ? 600 : 400;
+                        vertical-alignment: center;
+                        overflow: TextOverflow.elide;
+                    }
+                    ita := TouchArea {
+                        mouse-cursor: MouseCursor.pointer;
+                        clicked => {
+                            root.current-index = i;
+                            root.selected(i);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Section title in the settings.
+component SectionTitle inherits Text {
+    color: Theme.fg;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+// Windows-11-style row: a small picture, the name (and at most a couple of words under it) on
+// one line each, the control on the right. Fixed height: nothing can run into the next row.
+component SettingRow inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <string> sub;
+    in property <string> tip;
+    in property <bool> last: false;
+    height: root.sub != "" ? 50px : 42px;
+    // under everything else: it shows the tooltip but never takes a click from the controls
+    if root.tip != "": TipArea { tip: root.tip; }
+    HorizontalLayout {
+        spacing: 10px;
+        Image {
+            source: root.icon;
+            width: 16px;
+            height: 16px;
+            y: (parent.height - self.height) / 2;
+            colorize: Theme.muted;
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 1px;
+            Text { text: root.label; color: Theme.fg; font-size: 13px; overflow: TextOverflow.elide; }
+            if root.sub != "": Text { text: root.sub; color: Theme.muted; font-size: 12px; overflow: TextOverflow.elide; }
+        }
+        HorizontalLayout {
+            alignment: end;
+            VerticalLayout { alignment: center; @children }
+        }
+    }
+    if !root.last: Rectangle { x: 26px; y: parent.height - 1px; width: parent.width - 26px; height: 1px; background: Theme.line; }
+}
+
+// A row that opens more below it ("Свой промпт ⌄").
+component FoldRow inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <string> sub;
+    in property <bool> last: false;
+    in-out property <bool> open;
+    height: root.sub != "" ? 50px : 42px;
+    HorizontalLayout {
+        spacing: 10px;
+        Image {
+            source: root.icon;
+            width: 16px;
+            height: 16px;
+            y: (parent.height - self.height) / 2;
+            colorize: Theme.muted;
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 1px;
+            Text { text: root.label; color: fta.has-hover ? Theme.accent-text : Theme.fg; font-size: 13px; overflow: TextOverflow.elide; }
+            if root.sub != "": Text { text: root.sub; color: Theme.muted; font-size: 12px; overflow: TextOverflow.elide; }
+        }
+        Image {
+            source: @image-url("icons/l-chevron-down.svg");
+            width: 14px;
+            height: 14px;
+            y: (parent.height - self.height) / 2;
+            colorize: Theme.muted;
+            transform-rotation: root.open ? 180deg : 0deg;
+            animate transform-rotation { duration: 180ms; easing: ease-out; }
+        }
+    }
+    if !root.last || root.open: Rectangle { x: 26px; y: parent.height - 1px; width: parent.width - 26px; height: 1px; background: Theme.line; }
+    fta := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.open = !root.open; }
+    }
+}
+
+// A block of settings: a small title, then its rows on one card.
+component Group inherits VerticalLayout {
+    in property <string> title;
+    spacing: 6px;
+    Text { text: root.title; color: Theme.muted; font-size: 12px; font-weight: 600; }
+    Rectangle {
+        background: Theme.surface;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Theme.line;
+        VerticalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            @children
+        }
+    }
+}
+
+// Gemini / Groq choice: a neutral letter badge (no third-party logos), name, one line about it.
+component ProviderCard inherits Rectangle {
+    in property <string> title;
+    in property <string> sub;
+    in property <image> logo;
+    in property <bool> selected;
+    in property <string> tip;
+    callback clicked();
+    height: 54px;
+    // both cards take half of the row whatever their words
+    horizontal-stretch: 1;
+    preferred-width: 120px;
+    min-width: 100px;
+    accessible-role: button;
+    accessible-label: root.title;
+    accessible-action-default => { root.clicked(); }
+    border-radius: 10px;
+    background: selected ? Theme.accent-soft : pta.has-hover ? Theme.hover : Theme.surface;
+    border-width: selected ? 1.5px : 1px;
+    border-color: selected ? Theme.accent : Theme.line;
+    animate background, border-color { duration: 150ms; }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 9px;
+        Image {
+            source: root.logo;
+            width: 24px;
+            height: 24px;
+            y: (parent.height - self.height) / 2;
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 1px;
+            horizontal-stretch: 1;
+            Text { text: root.title; color: Theme.fg; font-size: 13px; font-weight: 600; overflow: TextOverflow.elide; }
+            Text { text: root.sub; color: Theme.muted; font-size: 12px; overflow: TextOverflow.elide; }
+        }
+    }
+    if root.selected: Rectangle {
+        x: parent.width - 20px;
+        y: 6px;
+        width: 14px;
+        height: 14px;
+        border-radius: 7px;
+        background: Theme.accent;
+        Image { source: @image-url("icons/l-check.svg"); width: 10px; height: 10px; colorize: Theme.accent-ink; }
+    }
+    pta := TipArea {
+        tip: root.tip;
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// "Как отвечать": a card with a tiny example of such an answer.
+component StyleCard inherits Rectangle {
+    in property <string> title;
+    in property <string> sample;
+    in property <bool> selected;
+    in property <string> tip;
+    callback clicked();
+    height: 64px;
+    horizontal-stretch: 1;
+    preferred-width: 100px;
+    min-width: 80px;
+    accessible-role: button;
+    accessible-label: root.title;
+    accessible-action-default => { root.clicked(); }
+    border-radius: 10px;
+    background: selected ? Theme.accent-soft : sta.has-hover ? Theme.hover : Theme.surface;
+    border-width: selected ? 1.5px : 1px;
+    border-color: selected ? Theme.accent : Theme.line;
+    animate background, border-color { duration: 150ms; }
+    VerticalLayout {
+        padding: 8px;
+        padding-left: 10px;
+        spacing: 3px;
+        alignment: start;
+        Text { text: root.title; color: Theme.fg; font-size: 12px; font-weight: 600; overflow: TextOverflow.elide; }
+        Text { text: root.sample; color: Theme.muted; font-size: 12px; wrap: TextWrap.word-wrap; overflow: TextOverflow.elide; vertical-stretch: 1; }
+    }
+    sta := TipArea {
+        tip: root.tip;
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// "Новое" / "Улучшено" / "Исправлено": quiet labels in one style.
+component NewsTag inherits Rectangle {
+    in property <int> tag;
+    width: 76px;
+    height: 18px;
+    border-radius: 5px;
+    background: Theme.raised;
+    Text {
+        text: root.tag == 0 ? @tr("Новое") : root.tag == 1 ? @tr("Улучшено") : @tr("Исправлено");
+        color: root.tag == 0 ? Theme.fg : Theme.muted;
+        font-size: 12px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+component ColorDot inherits Rectangle {
+    in property <color> dot-color;
+    in property <bool> picked;
+    in property <bool> rainbow: false;
+    in property <string> tip;
+    callback clicked();
+    width: 26px;
+    height: 26px;
+    Rectangle {
+        width: dta.has-hover || root.picked ? 24px : 20px;
+        height: self.width;
+        border-radius: self.width / 2;
+        background: root.dot-color;
+        border-width: root.picked ? 2px : 0px;
+        border-color: Theme.fg;
+        animate width { duration: 150ms; easing: ease-out; }
+        if root.rainbow: Image { source: @image-url("icons/rainbow.svg"); width: parent.width; height: parent.height; }
+    }
+    dta := TipArea {
+        tip: root.tip;
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.clicked(); }
     }
 }
 
@@ -1012,144 +1313,155 @@ export component MainWindow inherits Window {
     icon: @image-url("icon.png");
     default-font-family: "Segoe UI";
     default-font-size: 13px;
-    preferred-width: 540px;
-    preferred-height: 680px;
+    preferred-width: 380px;
+    preferred-height: 220px;
     min-width: root.overlay-view ? 1px : root.min-w;
     min-height: root.overlay-view ? 1px : root.min-h;
 
-    in property <length> min-w: 280px;
-    in property <length> min-h: 120px;
+    in property <string> app-title: "Nortex Assist";
+    in property <length> min-w: 300px;
+    in property <length> min-h: 180px;
     in property <float> win-opacity: 1.0;
     // false for a moment before the window fades in
     in property <bool> appear-on: true;
     in property <bool> pinned: false;
-    // compact, click-through presentation used by the game-overlay mode
+    // compact, click-through presentation used by the "on top" mode
     in property <bool> overlay-view: false;
     // overlay text size; the overlay window is exactly as big as its text (Rust reads ov-want-*)
     in property <length> ov-font: 16px;
+    // how much of the overlay's time is left (1 → 0): the thin bar at its bottom
+    in property <float> ov-left: 1.0;
     property <length> ov-pad-x: root.ov-font * 0.9;
     property <length> ov-pad-y: root.ov-font * 0.55;
-    // "Думаю" plus the three dots
     property <length> ov-extra: root.thinking ? root.ov-font + 9px : 0px;
     property <length> ov-text-w: Math.min(ov-measure.preferred-width + root.ov-extra + 2px, root.ov-font * 28);
     out property <length> ov-want-w: root.ov-text-w + 2 * root.ov-pad-x + 2px;
-    out property <length> ov-want-h: Math.min(ov-wrap.preferred-height, root.ov-font * 1.4 * 8) + 2 * root.ov-pad-y + 2px;
+    out property <length> ov-want-h: Math.min(ov-wrap.preferred-height, root.ov-font * 1.4 * 8) + 2 * root.ov-pad-y + 2px + 4px;
 
-    // answer area
+    // ---- dialog ----
+    in property <[FeedItem]> feed;
+    // a line shown instead of the dialog ("Выделено: …", "Снимок экрана готов", errors without a question)
+    in property <string> status-text;
+    // text of the overlay window (the last answer as plain text)
     in property <string> body-text;
-    in property <string> question-text;
-    in property <string> hint-text;
     in property <bool> busy;
     in property <bool> thinking;
     in property <string> toast-text;
+    in property <bool> has-key: true;
+    in property <[HintRow]> hints;
+    in property <[ActionBtn]> actions;
+    in property <bool> select-mode: false;
+    in property <string> select-text;
+    in property <float> text-scale: 1.0;
+    in property <bool> copy-done;
+    // counts up when a new question is added: the dialog scrolls to it
+    in property <int> scroll-gen;
 
-    // update strip
+    // ---- update strip ----
     in property <bool> update-shown;
     in property <bool> update-busy;
     in property <string> update-text;
-    in-out property <bool> auto-update: true;
-    in property <string> version-text;
-    in property <string> update-status;
+    // the strip says "updated to 1.4.0" and offers what's new instead of an update
+    in property <bool> news-strip;
 
-    // toolbar
-    in property <bool> nav-visible;
-    in property <bool> answer-tools;
-    in property <string> pos-text;
-    in property <bool> prev-enabled;
-    in property <bool> next-enabled;
-    in property <bool> retry-enabled;
-    in property <bool> copy-done;
-
-    // composer
+    // ---- composer ----
     in property <bool> composer-on;
     in property <string> composer-placeholder;
     in-out property <string> composer-text;
     in property <[ThumbItem]> thumbs;
-    // files and folders attached with the paperclip
     in property <[FileItem]> files;
+    // voice in the window: recording / turning speech into text
+    in property <bool> recording;
+    in property <bool> transcribing;
+    in property <[float]> rec-levels;
+    in property <string> rec-time;
+    in property <string> voice-key: "F8";
 
-    // answer layout: blocks of the short part (and of the details when opened)
-    in property <[BlockItem]> blocks;
-    in property <bool> has-more: false;
-    in property <bool> select-mode: false;
-    in-out property <bool> lang-en: false;
-    in property <string> select-text;
-    in property <bool> uninstall-open: false;
-    in property <int> uninstall-left: 0;
-    in property <bool> expanded: false;
-    in property <float> text-scale: 1.0;
-    in property <[int]> text-scales: [85, 100, 115, 130, 150, 175];
-    in-out property <int> text-scale-index: 1;
-
-    // history
+    // ---- history ----
     in property <bool> history-open;
     in property <[HistItem]> history-items;
 
-    // settings
+    // ---- settings ----
     in property <bool> settings-open;
-    in-out property <int> provider-index;
+    in-out property <bool> advanced;
+    in property <bool> settings-dot;
+    in property <bool> smart-offer;
+    in property <bool> smart-explain;
+    in property <int> provider-index;
+    in-out property <string> api-key;
+    in property <string> api-key-placeholder;
+    // key check: 0 none, 1 checking, 2 works, 3 problem
+    in property <int> key-state;
+    in property <string> key-state-text;
     in-out property <int> model-index;
     in-out property <string> model-custom;
-    in-out property <string> api-key;
-    in property <string> api-key-label;
-    in property <string> api-key-placeholder;
-    in property <string> api-key-link-text;
+    in property <[string]> gemini-models;
+    in property <[string]> gemini-models-short;
+    in-out property <bool> smart-keys: true;
+    in-out property <int> key-mode-index: 0;
+    in property <[KeyRow]> main-keys;
+    in property <[KeyRow]> extra-keys;
+    in property <string> keys-hint;
+    // 0 short, 1 with a reason, 2 detailed, -1 own prompt
+    in property <int> style-index;
+    in-out property <string> prompt-text;
+    in-out property <int> theme-index;
     in-out property <float> opacity-pct: 100;
-    in-out property <bool> autostart;
-    in-out property <bool> history-enabled;
+    in property <[int]> text-scales: [85, 100, 115, 130, 150, 175];
+    in-out property <int> text-scale-index: 1;
     in-out property <bool> overlay-mode;
-    in-out property <bool> two-level: true;
     in property <[int]> overlay-fonts: [12, 14, 16, 18, 20, 24, 28, 32];
     in-out property <int> overlay-font-index: 2;
-    in-out property <bool> show-tray: true;
-    // own accent colour: palette state (hue in degrees, saturation and value 0..1) and the HEX field
-    in-out property <bool> custom-open: false;
-    in-out property <float> custom-h: 175;
-    in-out property <float> custom-s: 0.6;
-    in-out property <float> custom-v: 0.8;
-    in-out property <string> custom-text;
     in-out property <int> shot-mode;
-    in-out property <int> theme-index;
-    in property <string> saved-text;
-    in-out property <string> prompt-text;
-    in property <string> key-check-text;
-    in property <bool> key-check-ok: true;
-    in property <[string]> hotkey-labels;
-    in property <[string]> hotkey-values;
-    in property <string> shot-hotkey: "Alt+W";
-    in property <string> free-hotkey: "Alt+E";
-    property <[string]> gemini-models: [
-        @tr("Gemini 3.5 Flash-Lite · быстрая, по умолчанию"),
-        @tr("Gemini 3.8 Flash · новая, умнее"),
-        @tr("Gemini 3.1 Pro · самая умная, медленнее"),
-        @tr("Gemini 2.5 Flash · запасная"),
-        @tr("Своя модель…"),
-    ];
+    in-out property <bool> history-enabled;
+    in-out property <bool> autostart;
+    in-out property <bool> show-tray: true;
+    in-out property <bool> auto-update: true;
+    in property <string> update-status;
+    in property <[ActionItem]> action-items;
+    in property <bool> actions-custom;
+    in-out property <bool> custom-open: false;
+    in-out property <float> custom-h: 250;
+    in-out property <float> custom-s: 0.5;
+    in-out property <float> custom-v: 0.95;
+    in-out property <string> custom-text;
+    in-out property <bool> lang-en: false;
+    in property <string> version-text;
+    in property <string> news-title;
+    in property <[NewsVersion]> news;
+    in-out property <bool> news-open;
+    in-out property <bool> about-open;
+    in property <string> settings-note;
+    in property <bool> uninstall-open: false;
+    in property <int> uninstall-left: 0;
+
     property <bool> panel-open: root.settings-open || root.history-open;
-    property <bool> brand-shown: !root.busy && !((root.nav-visible || root.answer-tools) && !root.panel-open);
+    // the usual window is low: the empty screen packs itself tighter
+    property <bool> low: root.height < 360px;
+    property <bool> empty: root.feed.length == 0 && root.status-text == "" && !root.busy;
+    property <bool> fold-prompt: false;
+    property <bool> fold-keys: false;
+    property <bool> fold-actions: false;
 
     callback submit(string);
-    callback prev();
-    callback next();
-    callback retry();
     callback stop();
+    callback quick-action(int);
+    callback retry();
+    callback copy-answer();
+    callback toggle-select();
+    callback copy-code(string);
+    callback toggle-turn(int);
+    callback turn-action(string);
+    callback mic-clicked();
     callback update-now();
     callback update-dismiss();
-    callback check-updates();
-    callback check-key();
-    callback prompt-preset(int);
-    callback copy();
-    callback toggle-more();
-    callback toggle-select();
-    callback toggle-lang();
-    callback copy-code(string);
-    callback uninstall-ask();
-    callback uninstall-cancel();
-    callback uninstall-confirm();
-    callback text-scale-changed(int);
+    callback show-news();
     callback attach-pick(bool);
     callback remove-file(int);
+    callback paste-image() -> bool;
+    callback remove-image(int);
     callback toggle-history();
+    callback history-selected(int);
     callback clear-history();
     callback toggle-settings();
     callback toggle-pin();
@@ -1159,21 +1471,40 @@ export component MainWindow inherits Window {
     callback drag-move();
     callback resize-start();
     callback resize-move();
-    callback paste-image() -> bool;
-    callback remove-image(int);
-    callback history-selected(int);
-    callback provider-changed(int);
-    callback opacity-changed(float);
+    // settings
+    callback provider-picked(int);
+    callback key-edited(string);
+    callback key-done();
+    callback open-key-link();
+    callback model-picked();
+    callback key-mode-picked(bool);
+    callback offer-try();
+    callback offer-later();
+    callback explain-done();
+    callback hotkey-key(int, string, bool, bool, bool, bool);
+    callback hotkey-cancelled();
+    callback hotkey-capture(bool);
+    callback reset-hotkeys();
+    callback style-picked(int);
+    callback prompt-saved();
     callback theme-picked(int);
     callback accent-picked(string);
     callback custom-color-picked(color);
     callback custom-text-edited(string);
-    callback hotkey-key(int, string, bool, bool, bool, bool);
-    callback hotkey-cancelled();
-    callback reset-hotkeys();
-    callback open-key-link();
-    callback save-settings();
+    callback opacity-changed(float);
+    callback text-scale-changed(int);
+    callback overlay-changed();
+    callback setting-changed();
+    callback action-edited(int, string, string);
+    callback action-add();
+    callback action-remove(int);
+    callback actions-reset();
+    callback check-updates();
+    callback toggle-lang();
     callback exit-app();
+    callback uninstall-ask();
+    callback uninstall-cancel();
+    callback uninstall-confirm();
 
     public function focus-input() { inp.focus(); }
     public function focus-root() { root-scope.focus(); }
@@ -1182,7 +1513,7 @@ export component MainWindow inherits Window {
 
     root-scope := FocusScope {
         key-pressed(e) => {
-            if (e.text == Key.Escape && (!root.pinned || root.busy)) {
+            if (e.text == Key.Escape && (!root.pinned || root.busy || root.recording)) {
                 root.escape-pressed();
                 return accept;
             }
@@ -1197,22 +1528,22 @@ export component MainWindow inherits Window {
 
         // the whole window fades in and rises a little when it opens
         Rectangle {
-            y: root.appear-on ? 0px : 10px;
+            y: root.appear-on ? 0px : 8px;
             height: parent.height;
             opacity: root.win-opacity * (root.appear-on ? 1 : 0);
-            animate opacity { duration: root.appear-on ? 180ms : 0ms; easing: ease-out; }
-            animate y { duration: root.appear-on ? 220ms : 0ms; easing: ease-out; }
+            animate opacity { duration: root.appear-on ? 160ms : 0ms; easing: ease-out; }
+            animate y { duration: root.appear-on ? 200ms : 0ms; easing: ease-out; }
             background: Theme.window;
-            border-radius: root.overlay-view ? Math.min(18px, root.ov-font * 0.8) : 18px;
+            border-radius: root.overlay-view ? Math.min(16px, root.ov-font * 0.8) : 14px;
             border-width: 1px;
             border-color: Theme.line-strong;
             clip: true;
 
             VerticalLayout {
-                // ---- toolbar ----
+                // ---- title bar: logo, name; history, settings, close. Double click pins the window ----
                 Rectangle {
                     visible: !root.overlay-view;
-                    height: root.overlay-view ? 0px : 44px;
+                    height: root.overlay-view ? 0px : 34px;
                     TouchArea {
                         pointer-event(e) => {
                             if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
@@ -1222,63 +1553,70 @@ export component MainWindow inherits Window {
                         moved => {
                             if (self.pressed) { root.drag-move(); }
                         }
+                        double-clicked => { root.toggle-pin(); }
                     }
                     HorizontalLayout {
-                        padding-left: 10px;
-                        padding-right: 10px;
-                        padding-top: 8px;
-                        padding-bottom: 8px;
+                        padding-left: 12px;
+                        padding-right: 6px;
                         spacing: 2px;
-                        // app name while the left side of the toolbar has no buttons
-                        if root.brand-shown: Brand { }
-                        // answer tools only make sense while an answer is on screen
-                        if root.nav-visible && !root.panel-open: IconButton { icon: @image-url("icons/left.svg"); tip: @tr("Предыдущий ответ"); enabled: root.prev-enabled; clicked => { root.prev(); } }
-                        if root.nav-visible && !root.panel-open: Text { text: root.pos-text; color: Theme.muted; font-size: 11px; vertical-alignment: center; horizontal-alignment: center; min-width: 34px; }
-                        if root.nav-visible && !root.panel-open: IconButton { icon: @image-url("icons/right.svg"); tip: @tr("Следующий ответ"); enabled: root.next-enabled; clicked => { root.next(); } }
-                        if root.nav-visible && !root.panel-open: Rectangle { width: 8px; }
-                        if root.busy: IconButton { icon: @image-url("icons/stop.svg"); tip: @tr("Остановить ответ (Esc)"); active: true; clicked => { root.stop(); } }
-                        if !root.busy && root.answer-tools && !root.panel-open: IconButton { icon: @image-url("icons/retry.svg"); tip: @tr("Спросить заново (Alt+S).\nЕсли ответ уже пришёл, модель посчитает его\nневерным и попробует ответить по-другому"); enabled: root.retry-enabled; clicked => { root.retry(); } }
-                        if !root.busy && root.answer-tools && !root.panel-open: IconButton {
-                            icon: root.copy-done ? @image-url("icons/check.svg") : @image-url("icons/copy.svg");
-                            tip: @tr("Скопировать короткий ответ без оформления");
-                            active: root.copy-done;
-                            clicked => { root.copy(); }
-                        }
-                        if !root.busy && root.answer-tools && !root.panel-open: IconButton {
-                            icon: @image-url("icons/select.svg");
-                            tip: root.select-mode ? @tr("Вернуть оформление") : @tr("Выделить текст: ответ станет простым текстом,\nкоторый можно выделить мышью и скопировать по частям");
-                            active: root.select-mode;
-                            clicked => { root.toggle-select(); }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+                            Logo { y: (parent.height - self.height) / 2; }
+                            Text { text: root.app-title; color: Theme.fg; font-size: 12px; font-weight: 600; vertical-alignment: center; }
                         }
                         Rectangle { horizontal-stretch: 1; }
-                        IconButton { icon: @image-url("icons/history.svg"); tip: @tr("История: прошлые вопросы и ответы.\nОтвет из истории можно уточнить"); active: root.history-open; clicked => { root.toggle-history(); } }
-                        IconButton { icon: @image-url("icons/settings.svg"); tip: @tr("Настройки"); active: root.settings-open; clicked => { root.toggle-settings(); } }
-                        IconButton { icon: @image-url("icons/pin.svg"); tip: @tr("Закрепить окно: оно не будет прятаться,\nкогда кликаешь в другое место или жмёшь Esc"); active: root.pinned; clicked => { root.toggle-pin(); } }
-                        IconButton { icon: @image-url("icons/close.svg"); tip: @tr("Спрятать окно (Esc) и остановить ответ.\nПрограмма остаётся в трее"); clicked => { root.hide-window(); } }
+                        IconButton {
+                            y: 3px;
+                            icon: @image-url("icons/l-pin.svg");
+                            active: root.pinned;
+                            tip: root.pinned ? @tr("Окно закреплено и не прячется.\nНажми, чтобы открепить") : @tr("Закрепить окно: оно не будет прятаться,\nкогда кликаешь в другое место или жмёшь Esc");
+                            clicked => { root.toggle-pin(); }
+                        }
+                        IconButton {
+                            y: 3px;
+                            icon: @image-url("icons/l-history.svg");
+                            tip: @tr("История");
+                            active: root.history-open;
+                            clicked => { root.toggle-history(); }
+                        }
+                        IconButton {
+                            y: 3px;
+                            icon: @image-url("icons/l-settings.svg");
+                            tip: @tr("Настройки");
+                            active: root.settings-open;
+                            dot: root.settings-dot;
+                            clicked => { root.toggle-settings(); }
+                        }
+                        IconButton {
+                            y: 3px;
+                            icon: @image-url("icons/l-close.svg");
+                            tip: @tr("Спрятать окно (Esc). Программа остаётся в трее.\nДвойной щелчок по полосе — закрепить окно");
+                            clicked => { root.hide-window(); }
+                        }
                     }
                     // waiting for the answer: a short accent stripe runs along the bottom edge
                     if root.busy: Rectangle {
-                        x: 14px;
+                        x: 0px;
                         y: parent.height - 2px;
-                        width: parent.width - 28px;
+                        width: parent.width;
                         height: 2px;
                         clip: true;
                         Rectangle {
                             property <float> phase: Math.mod(animation-tick() / 1ms, 1400) / 1400;
-                            width: parent.width * 0.28;
+                            width: parent.width * 0.3;
                             x: (parent.width + self.width) * self.phase - self.width;
                             height: 2px;
-                            border-radius: 1px;
                             background: @linear-gradient(90deg, Theme.accent.with-alpha(0) 0%, Theme.accent 50%, Theme.accent.with-alpha(0) 100%);
                         }
                     }
                 }
 
-                // ---- "new version" strip: slides down ----
+                // ---- "new version" strip ----
                 if root.update-shown && !root.overlay-view && !root.settings-open: upd := Rectangle {
                     property <bool> shown: false;
                     Timer { interval: 16ms; running: !upd.shown; triggered => { upd.shown = true; } }
-                    height: shown ? 40px : 0px;
+                    height: shown ? 44px : 0px;
                     animate height { duration: 220ms; easing: ease-out; }
                     clip: true;
                     HorizontalLayout {
@@ -1286,11 +1624,13 @@ export component MainWindow inherits Window {
                         padding-right: 10px;
                         padding-bottom: 6px;
                         Rectangle {
-                            background: Theme.accent-soft;
+                            background: Theme.surface;
                             border-radius: 10px;
+                            border-width: 1px;
+                            border-color: Theme.line;
                             HorizontalLayout {
                                 padding-left: 12px;
-                                padding-right: 3px;
+                                padding-right: 4px;
                                 spacing: 4px;
                                 Text {
                                     text: root.update-text;
@@ -1300,8 +1640,14 @@ export component MainWindow inherits Window {
                                     horizontal-stretch: 1;
                                     overflow: TextOverflow.elide;
                                 }
-                                if !root.update-busy: ActionButton {
-                                    y: 2px;
+                                if root.news-strip: Button {
+                                    y: 3px;
+                                    height: 30px;
+                                    text: @tr("Что нового");
+                                    clicked => { root.show-news(); }
+                                }
+                                if !root.update-busy && !root.news-strip: Button {
+                                    y: 3px;
                                     height: 30px;
                                     text: @tr("Обновить");
                                     primary: true;
@@ -1309,8 +1655,8 @@ export component MainWindow inherits Window {
                                     clicked => { root.update-now(); }
                                 }
                                 if !root.update-busy: IconButton {
-                                    y: 3px;
-                                    icon: @image-url("icons/close.svg");
+                                    y: 4px;
+                                    icon: @image-url("icons/l-close.svg");
                                     tip: @tr("Напомнить при следующем запуске");
                                     clicked => { root.update-dismiss(); }
                                 }
@@ -1319,14 +1665,14 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                // ---- answer in overlay presentation: just the text, centred ----
+                // ---- "on top" presentation: just the text, a thin bar shows the time left ----
                 if root.overlay-view: Rectangle {
                     vertical-stretch: 1;
                     if !root.thinking: Text {
                         x: root.ov-pad-x + 1px;
                         y: root.ov-pad-y + 1px;
                         width: parent.width - 2 * root.ov-pad-x - 2px;
-                        height: parent.height - 2 * root.ov-pad-y - 2px;
+                        height: parent.height - 2 * root.ov-pad-y - 6px;
                         text: root.body-text;
                         wrap: TextWrap.word-wrap;
                         overflow: TextOverflow.elide;
@@ -1334,40 +1680,195 @@ export component MainWindow inherits Window {
                         vertical-alignment: center;
                         color: Theme.fg;
                         font-size: root.ov-font;
-                        font-weight: 500;
+                        font-weight: 600;
                     }
                     if root.thinking: HorizontalLayout {
                         alignment: center;
-                        Thinking { size: root.ov-font; }
+                        Thinking { size: root.ov-font; color: Theme.fg; }
+                    }
+                    Rectangle {
+                        x: root.ov-pad-x;
+                        y: parent.height - 7px;
+                        width: parent.width - 2 * root.ov-pad-x;
+                        height: 3px;
+                        border-radius: 1.5px;
+                        background: Theme.line;
+                        Rectangle {
+                            x: 0;
+                            width: parent.width * Math.clamp(root.ov-left, 0, 1);
+                            height: 3px;
+                            border-radius: 1.5px;
+                            background: Theme.accent;
+                            animate width { duration: 130ms; }
+                        }
                     }
                 }
 
-                // ---- answer ----
-                if !root.panel-open && !root.overlay-view: Panel {
+                // ---- empty window: sparkle, "Спроси что угодно" and the keys ----
+                // a low window (the usual one) drops the big sparkle and packs the hints tighter
+                if !root.panel-open && !root.overlay-view && root.empty: Panel {
                     vertical-stretch: 1;
-                    answer-sv := ScrollView {
+                    VerticalLayout {
+                        alignment: center;
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        padding-top: root.low ? 2px : 20px;
+                        padding-bottom: root.low ? 2px : 20px;
+                        spacing: root.low ? 8px : 14px;
+                        if !root.low: HorizontalLayout {
+                            alignment: center;
+                            Image {
+                                source: @image-url("icons/spark.svg");
+                                width: 44px;
+                                height: 44px;
+                                colorize: Theme.accent;
+                            }
+                        }
+                        HorizontalLayout {
+                            alignment: center;
+                            spacing: 7px;
+                            if root.low: Image {
+                                source: @image-url("icons/spark.svg");
+                                width: 16px;
+                                height: 16px;
+                                y: (parent.height - self.height) / 2;
+                                colorize: Theme.accent;
+                            }
+                            Text {
+                                text: root.has-key ? @tr("Спроси что угодно") : @tr("Добавь ключ, чтобы начать");
+                                color: Theme.fg;
+                                font-size: root.low ? 14px : 18px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                        }
+                        if !root.has-key: Text {
+                            text: @tr("Ключ бесплатный, его выдают Google (Gemini) или Groq. Это займёт минуту.");
+                            color: Theme.muted;
+                            font-size: 12px;
+                            wrap: TextWrap.word-wrap;
+                            horizontal-alignment: center;
+                        }
+                        if !root.has-key: HorizontalLayout {
+                            alignment: center;
+                            Button { text: @tr("Открыть настройки"); primary: true; clicked => { root.toggle-settings(); } }
+                        }
+                        if root.has-key: HorizontalLayout {
+                            alignment: center;
+                            VerticalLayout {
+                                spacing: root.low ? 5px : 10px;
+                                for h in root.hints: HorizontalLayout {
+                                    spacing: 10px;
+                                    KeyCombo { keys: h.keys; width: 84px; }
+                                    Text {
+                                        text: h.text;
+                                        color: Theme.muted;
+                                        font-size: 12px;
+                                        vertical-alignment: center;
+                                        overflow: TextOverflow.elide;
+                                        width: min(220px, root.width - 32px - 94px);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ---- the dialog: questions as chips on the right, answers under them ----
+                if !root.panel-open && !root.overlay-view && !root.empty: Panel {
+                    vertical-stretch: 1;
+                    feed-sv := ScrollView {
                         vertical-stretch: 1;
-                        // how far the answer goes: taken from where it really ends (see `answer-end` below)
+                        // how far the content goes: taken from where it really ends (see `feed-end`)
                         property <length> content-end;
+                        property <length> last-top;
                         content-height: max(self.visible-height, self.content-end);
+                        content-width: self.visible-width;
+                        // a new question: bring it to the top of the view
+                        changed last-top => {
+                            self.content-y = -max(0px, self.last-top - 6px);
+                        }
                         VerticalLayout {
                             padding-left: 16px;
                             padding-right: 16px;
-                            padding-top: 4px;
+                            padding-top: 6px;
                             padding-bottom: 12px;
-                            spacing: 8px;
+                            spacing: 14px;
                             alignment: start;
-                            if root.question-text != "": Text {
-                                text: root.question-text;
-                                wrap: TextWrap.word-wrap;
-                                color: Theme.muted;
-                                font-size: 12px;
-                            }
-                            if root.thinking: Thinking { }
-                            if !root.thinking && root.select-mode: VerticalLayout {
-                                spacing: 9px;
-                                // plain text that can be selected with the mouse and copied part by part
-                                FocusScope {
+                            for t[ti] in root.feed: VerticalLayout {
+                                spacing: 8px;
+                                // the newest question reports where it is, so the view can scroll to it
+                                changed y => {
+                                    if (ti == root.feed.length - 1) { feed-sv.last-top = self.y; }
+                                }
+                                init => {
+                                    if (ti == root.feed.length - 1) { feed-sv.last-top = self.y; }
+                                }
+                                // question chip (right), folds the turn when clicked if it is an older one
+                                HorizontalLayout {
+                                    alignment: end;
+                                    Rectangle {
+                                        property <length> maxw: (feed-sv.visible-width - 32px) * 0.82;
+                                        width: Math.min(qt.preferred-width + 22px, self.maxw);
+                                        height: qt.height + 12px;
+                                        border-radius: 12px;
+                                        background: Theme.raised;
+                                        qt := Text {
+                                            x: 11px;
+                                            y: 6px;
+                                            width: parent.width - 22px;
+                                            height: Math.min(self.preferred-height, 34px);
+                                            text: t.q;
+                                            color: Theme.fg;
+                                            font-size: 12px;
+                                            wrap: TextWrap.word-wrap;
+                                            overflow: TextOverflow.elide;
+                                        }
+                                        if !t.open: TouchArea {
+                                            mouse-cursor: MouseCursor.pointer;
+                                            clicked => { root.toggle-turn(ti); }
+                                        }
+                                    }
+                                }
+                                // the files that went with the question
+                                if t.files != "": HorizontalLayout {
+                                    alignment: end;
+                                    spacing: 4px;
+                                    Image {
+                                        source: @image-url("icons/l-clip.svg");
+                                        width: 12px;
+                                        height: 12px;
+                                        y: (parent.height - self.height) / 2;
+                                        colorize: Theme.subtle;
+                                    }
+                                    Text {
+                                        text: t.files;
+                                        color: Theme.subtle;
+                                        font-size: 12px;
+                                        overflow: TextOverflow.elide;
+                                        max-width: (feed-sv.visible-width - 32px) * 0.82;
+                                    }
+                                }
+                                // an older turn, folded: one line of its answer
+                                if !t.open: Rectangle {
+                                    height: 22px;
+                                    Text {
+                                        x: 0;
+                                        width: parent.width;
+                                        text: t.preview;
+                                        color: fold-ta.has-hover ? Theme.fg : Theme.muted;
+                                        font-size: 12px;
+                                        overflow: TextOverflow.elide;
+                                        vertical-alignment: center;
+                                    }
+                                    fold-ta := TipArea {
+                                        tip: @tr("Показать ответ целиком");
+                                        mouse-cursor: MouseCursor.pointer;
+                                        clicked => { root.toggle-turn(ti); }
+                                    }
+                                }
+                                if t.open && t.waiting: Thinking { }
+                                if t.open && !t.waiting && root.select-mode && ti == root.feed.length - 1: FocusScope {
                                     capture-key-pressed(e) => {
                                         if (e.modifiers.control && !e.modifiers.alt) {
                                             if (e.text == "с" || e.text == "С") { sel.copy(); return accept; }
@@ -1388,39 +1889,76 @@ export component MainWindow inherits Window {
                                         }
                                     }
                                 }
-                                if root.has-more: MoreToggle {
-                                    expanded: root.expanded;
-                                    clicked => { root.toggle-more(); }
+                                if t.open && !t.waiting && !(root.select-mode && ti == root.feed.length - 1): VerticalLayout {
+                                    spacing: 9px * root.text-scale;
+                                    for b[i] in t.blocks: AnswerBlock {
+                                        b: b;
+                                        first: i == 0;
+                                        scale: root.text-scale;
+                                        copy-code(c) => { root.copy-code(c); }
+                                    }
+                                }
+                                // "Ответила Gemini — у Groq кончился лимит"
+                                if t.open && t.note != "": Text {
+                                    text: t.note;
+                                    color: Theme.subtle;
+                                    font-size: 12px;
+                                    wrap: TextWrap.word-wrap;
+                                }
+                                if t.open && t.action != "": HorizontalLayout {
+                                    alignment: start;
+                                    Button { text: t.action-text; clicked => { root.turn-action(t.action); } }
+                                }
+                                // quick follow-ups under the newest answer: pictures that open into a word
+                                if t.open && ti == root.feed.length - 1 && !t.waiting && !root.busy && !t.error: HorizontalLayout {
+                                    spacing: 2px;
+                                    padding-top: 2px;
+                                    for a[ai] in root.actions: ActionChip {
+                                        text: a.label;
+                                        icon: a.kind == 0 ? @image-url("icons/l-bulb.svg") : a.kind == 1 ? @image-url("icons/l-shorter.svg") : a.kind == 2 ? @image-url("icons/l-globe.svg") : @image-url("icons/l-sparkles.svg");
+                                        clicked => { root.quick-action(ai); }
+                                    }
+                                    ActionChip {
+                                        text: @tr("Другой вариант");
+                                        icon: @image-url("icons/l-refresh.svg");
+                                        clicked => { root.retry(); }
+                                    }
+                                    Rectangle { horizontal-stretch: 1; min-width: 0px; }
+                                    ActionChip {
+                                        text: root.copy-done ? @tr("Скопировано") : @tr("Копировать");
+                                        icon: root.copy-done ? @image-url("icons/l-check.svg") : @image-url("icons/l-copy.svg");
+                                        active: root.copy-done;
+                                        grow-left: true;
+                                        clicked => { root.copy-answer(); }
+                                    }
+                                    ActionChip {
+                                        text: @tr("Выделить");
+                                        icon: @image-url("icons/l-cursor.svg");
+                                        active: root.select-mode;
+                                        open-when-active: false;
+                                        grow-left: true;
+                                        clicked => { root.toggle-select(); }
+                                    }
+                                }
+                                // a failed answer can be asked again
+                                if t.open && ti == root.feed.length - 1 && !t.waiting && !root.busy && t.error: HorizontalLayout {
+                                    alignment: start;
+                                    Pill { text: @tr("Повторить"); clicked => { root.retry(); } }
                                 }
                             }
-                            if !root.thinking && !root.select-mode: VerticalLayout {
-                                spacing: 9px * root.text-scale;
-                                for b[i] in root.blocks: AnswerBlock {
-                                    b: b;
-                                    first: i == 0;
-                                    scale: root.text-scale;
-                                    copy-code(t) => { root.copy-code(t); }
-                                }
-                                if root.has-more: MoreToggle {
-                                    expanded: root.expanded;
-                                    clicked => { root.toggle-more(); }
-                                }
-                            }
-                            if root.hint-text != "": Text {
-                                text: root.hint-text;
+                            if root.status-text != "": Text {
+                                text: root.status-text;
                                 wrap: TextWrap.word-wrap;
-                                color: Theme.subtle;
-                                font-size: 12px;
+                                color: Theme.muted;
+                                font-size: 13px;
                             }
-                            // Marks the end of the answer. By default a scroll view is as tall as the
-                            // minimal height of its content, and Slint measures wrapped text in the answer
-                            // blocks as if every paragraph were one line, so a long answer stopped scrolling
-                            // early or did not scroll at all. The blocks themselves are laid out right, so
-                            // this marker sits where the answer really ends (12px = padding-bottom).
-                            answer-end := Rectangle {
+                            // Marks the end of the content. A scroll view takes the minimal height of its
+                            // content, and Slint measures wrapped text as one line, so a long answer stopped
+                            // scrolling early. This marker sits where the content really ends.
+                            feed-end := Rectangle {
                                 height: 0px;
-                                init => { answer-sv.content-end = self.y + 12px; }
-                                changed y => { answer-sv.content-end = self.y + 12px; }
+                                init => { feed-sv.content-end = self.y + 12px; }
+                                changed y => { feed-sv.content-end = self.y + 12px; }
                             }
                         }
                     }
@@ -1430,34 +1968,41 @@ export component MainWindow inherits Window {
                 if root.history-open && !root.settings-open: Panel {
                     vertical-stretch: 1;
                     VerticalLayout {
-                        padding: 16px;
-                        padding-top: 4px;
+                        padding: 14px;
+                        padding-top: 6px;
                         spacing: 8px;
-                        Text { text: @tr("ПОСЛЕДНИЕ ДИАЛОГИ"); color: Theme.accent-text; font-size: 9px; font-weight: 700; }
                         HorizontalLayout {
-                            Text { text: @tr("История"); color: Theme.fg; font-size: 17px; font-weight: 700; vertical-alignment: center; }
+                            Text { text: @tr("История"); color: Theme.fg; font-size: 16px; font-weight: 600; vertical-alignment: center; }
                             Rectangle { horizontal-stretch: 1; }
-                            if root.history-items.length > 0: ConfirmButton {
-                                text: @tr("Очистить");
-                                confirm-text: @tr("Удалить всё?");
-                                confirmed => { root.clear-history(); }
+                            if root.history-items.length > 0: Button {
+                                text: hist-armed ? @tr("Удалить всё?") : @tr("Очистить");
+                                danger: hist-armed;
+                                property <bool> hist-armed: false;
+                                tip: @tr("Удаляет со второго нажатия");
+                                clicked => {
+                                    if (self.hist-armed) {
+                                        self.hist-armed = false;
+                                        root.clear-history();
+                                    } else {
+                                        self.hist-armed = true;
+                                    }
+                                }
                             }
                         }
-                        if root.history-items.length == 0: Text { text: @tr("Пока пусто: здесь появятся вопросы и ответы."); color: Theme.muted; }
+                        if root.history-items.length == 0: Text { text: @tr("Пока пусто: здесь появятся вопросы и ответы."); color: Theme.muted; font-size: 12px; }
                         ListView {
                             vertical-stretch: 1;
                             for it[i] in root.history-items: Rectangle {
-                                height: 54px;
-                                background: hta.pressed ? Theme.line-strong : hta.has-hover ? Theme.line : transparent;
+                                height: 52px;
+                                background: hta.pressed ? Theme.line-strong : hta.has-hover ? Theme.hover : transparent;
                                 animate background { duration: 140ms; }
                                 border-radius: 8px;
                                 VerticalLayout {
                                     padding: 6px;
-                                    padding-left: hta.has-hover ? 11px : 8px;
-                                    animate padding-left { duration: 160ms; easing: ease-out; }
+                                    padding-left: 8px;
                                     spacing: 2px;
-                                    Text { text: it.title; color: Theme.fg; font-size: 13px; font-weight: 600; overflow: TextOverflow.elide; }
-                                    Text { text: it.sub; color: Theme.muted; font-size: 11px; overflow: TextOverflow.elide; }
+                                    Text { text: it.title; color: Theme.fg; font-size: 13px; overflow: TextOverflow.elide; }
+                                    Text { text: it.sub; color: Theme.muted; font-size: 12px; overflow: TextOverflow.elide; }
                                 }
                                 hta := TipArea {
                                     tip: @tr("Открыть ответ; его можно уточнить");
@@ -1469,139 +2014,224 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                // ---- settings ----
+                // ---- settings, in the same window ----
                 if root.settings-open: Panel {
                     vertical-stretch: 1;
                     Rectangle {
                         height: 40px;
                         HorizontalLayout {
-                            padding-left: 16px;
-                            padding-right: 16px;
-                            Text { text: @tr("Настройки"); color: Theme.fg; font-size: 17px; font-weight: 700; vertical-alignment: center; }
-                            Rectangle { horizontal-stretch: 1; }
-                            Text { text: root.version-text; color: Theme.subtle; font-size: 11px; vertical-alignment: center; }
+                            padding-left: 8px;
+                            padding-right: 14px;
+                            spacing: 6px;
+                            IconButton {
+                                y: 6px;
+                                icon: @image-url("icons/l-chevron-left.svg");
+                                tip: @tr("Назад");
+                                clicked => { root.toggle-settings(); }
+                            }
+                            Text { text: @tr("Настройки"); color: Theme.fg; font-size: 16px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+                            Text { text: @tr("Расширенные"); color: Theme.muted; font-size: 12px; vertical-alignment: center; }
+                            Toggle { y: 10px; checked <=> root.advanced; toggled => { root.setting-changed(); } }
                         }
                     }
-                    ScrollView {
+                    // a problem with a setting: right under the title, where it is seen
+                    if root.settings-note != "": Rectangle {
+                        height: note-t.height + 14px;
+                        background: Theme.danger.with-alpha(0.12);
+                        note-t := Text {
+                            x: 14px;
+                            y: 7px;
+                            width: root.width - 28px;
+                            height: self.preferred-height;
+                            text: root.settings-note;
+                            color: Theme.danger;
+                            font-size: 12px;
+                            wrap: TextWrap.word-wrap;
+                        }
+                    }
+                    set-sv := ScrollView {
                         vertical-stretch: 1;
                         VerticalLayout {
                             padding-left: 14px;
                             padding-right: 14px;
-                            padding-bottom: 8px;
+                            padding-top: 4px;
+                            padding-bottom: 16px;
                             spacing: 10px;
+                            alignment: start;
 
-                            Card {
-                                index: "01";
-                                title: @tr("Подключение");
-                                Label { text: @tr("Провайдер"); }
-                                ComboBox {
-                                    model: ["Google Gemini", "Groq"];
-                                    current-index <=> root.provider-index;
-                                    selected(v) => { root.provider-changed(self.current-index); }
-                                }
-                                if root.provider-index == 0: VerticalLayout {
+                            // offer of the new key mode to those who updated from 1.3
+                            if root.smart-offer: Rectangle {
+                                background: Theme.accent-soft;
+                                border-radius: 10px;
+                                border-width: 1px;
+                                border-color: Theme.accent.with-alpha(0.4);
+                                VerticalLayout {
+                                    padding: 12px;
                                     spacing: 8px;
-                                    Label { text: @tr("Модель Gemini"); }
-                                    ComboBox {
-                                        model: root.gemini-models;
-                                        current-index <=> root.model-index;
+                                    Text { text: @tr("Новое: одна клавиша на всё"); color: Theme.fg; font-size: 13px; font-weight: 600; }
+                                    Text {
+                                        width: set-sv.visible-width - 28px - 24px;
+                                        height: self.preferred-height;
+                                        text: @tr("Alt+W сам поймёт, что спросить: выделенный текст или то, что на экране. Ответ приходит сразу.");
+                                        color: Theme.muted;
+                                        font-size: 12px;
+                                        wrap: TextWrap.word-wrap;
                                     }
-                                    if root.model-index == root.gemini-models.length - 1: Field {
-                                        text <=> root.model-custom;
-                                        placeholder: @tr("Например: gemini-3.8-flash");
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        alignment: start;
+                                        Button { text: @tr("Попробовать"); primary: true; clicked => { root.offer-try(); } }
+                                        Button { text: @tr("Не сейчас"); clicked => { root.offer-later(); } }
                                     }
                                 }
-                                if root.provider-index == 1: VerticalLayout {
-                                    spacing: 8px;
-                                    Label { text: @tr("Модель Groq"); }
-                                    ComboBox { model: ["Qwen 3.8 · 27B"]; current-index: 0; }
-                                    Label { text: @tr("Qwen 3.8 27B понимает текст и картинки."); font-size: 10px; }
+                            }
+                            // after "Попробовать": how the keys work now
+                            if root.smart-explain: Rectangle {
+                                background: Theme.surface;
+                                border-radius: 10px;
+                                border-width: 1px;
+                                border-color: Theme.line;
+                                VerticalLayout {
+                                    padding: 12px;
+                                    spacing: 9px;
+                                    Text { text: @tr("Теперь клавиши работают так"); color: Theme.fg; font-size: 13px; font-weight: 600; }
+                                    for h in root.hints: HorizontalLayout {
+                                        spacing: 10px;
+                                        KeyCombo { keys: h.keys; width: 92px; }
+                                        Text { text: h.text; color: Theme.muted; font-size: 12px; vertical-alignment: center; overflow: TextOverflow.elide; horizontal-stretch: 1; }
+                                    }
+                                    HorizontalLayout {
+                                        alignment: start;
+                                        Button { text: @tr("Понятно"); primary: true; clicked => { root.explain-done(); } }
+                                    }
                                 }
-                                Label { text: root.api-key-label; }
+                            }
+
+                            // ---- Нейросеть ----
+                            SectionTitle { text: @tr("Нейросеть"); }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                ProviderCard {
+                                    title: "Gemini";
+                                    sub: @tr("Умная, видит фото");
+                                    tip: @tr("Google Gemini: умная, хорошо понимает картинки");
+                                    logo: @image-url("icons/gemini.svg");
+                                    selected: root.provider-index == 0;
+                                    clicked => { root.provider-picked(0); }
+                                }
+                                ProviderCard {
+                                    title: "Groq";
+                                    sub: @tr("Очень быстрая");
+                                    tip: @tr("Groq (модель Qwen): отвечает очень быстро");
+                                    logo: @image-url("icons/groq.svg");
+                                    selected: root.provider-index == 1;
+                                    clicked => { root.provider-picked(1); }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Text { text: @tr("Ключ"); color: Theme.fg; font-size: 12px; vertical-alignment: center; width: 36px; }
                                 Field {
                                     password: true;
                                     text <=> root.api-key;
                                     placeholder: root.api-key-placeholder;
+                                    edited => { root.key-edited(self.text); }
+                                    accepted => { root.key-done(); }
+                                    focus-lost => { root.key-done(); }
                                 }
-                                HorizontalLayout {
-                                    spacing: 14px;
-                                    alignment: start;
-                                    LinkText { text: root.api-key-link-text; tip: @tr("Там можно бесплатно получить ключ"); clicked => { root.open-key-link(); } }
-                                    LinkText { text: @tr("Проверить ключ"); tip: @tr("Проверить, что ключ рабочий\nи выбранная модель доступна"); clicked => { root.check-key(); } }
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                padding-left: 46px;
+                                if root.key-state != 0: Rectangle {
+                                    width: 8px;
+                                    height: 8px;
+                                    y: (parent.height - self.height) / 2;
+                                    border-radius: 4px;
+                                    background: root.key-state == 2 ? Theme.ok : root.key-state == 3 ? Theme.danger : Theme.subtle;
                                 }
-                                if root.key-check-text != "": Label {
-                                    text: root.key-check-text;
-                                    color: root.key-check-ok ? Theme.muted : Theme.danger;
+                                if root.key-state != 0: Text {
+                                    text: root.key-state-text;
+                                    color: root.key-state == 2 ? Theme.ok : root.key-state == 3 ? Theme.danger : Theme.muted;
+                                    font-size: 12px;
+                                    vertical-alignment: center;
                                     wrap: TextWrap.word-wrap;
+                                    horizontal-stretch: 1;
+                                }
+                                if root.key-state == 0: Rectangle { horizontal-stretch: 1; }
+                                LinkText {
+                                    text: @tr("Получить ключ бесплатно ↗");
+                                    vertical-alignment: center;
+                                    tip: @tr("Откроется сайт, где ключ выдают бесплатно");
+                                    clicked => { root.open-key-link(); }
+                                }
+                            }
+                            // ---- Клавиши ----
+                            SectionTitle { text: @tr("Клавиши"); }
+                            VerticalLayout {
+                                spacing: 2px;
+                                for k in root.main-keys: VerticalLayout {
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        KeyCapture {
+                                            keys: k.keys;
+                                            bad: k.bad;
+                                            key(t, c, a, s, m) => { root.hotkey-key(k.slot, t, c, a, s, m); }
+                                            cancelled => { root.hotkey-cancelled(); }
+                                            started => { root.hotkey-capture(true); }
+                                            ended => { root.hotkey-capture(false); }
+                                        }
+                                        Text { text: k.label; color: Theme.fg; font-size: 13px; vertical-alignment: center; overflow: TextOverflow.elide; horizontal-stretch: 1; }
+                                    }
+                                    if k.warn != "": Text {
+                                        text: k.warn;
+                                        color: k.bad ? Theme.danger : Theme.warn;
+                                        font-size: 12px;
+                                        overflow: TextOverflow.elide;
+                                    }
                                 }
                             }
 
-                            Card {
-                                index: "02";
-                                title: @tr("Внешний вид");
-                                Label { text: @tr("Тема"); }
-                                Segmented {
-                                    items: [@tr("Тёмная"), @tr("Светлая")];
-                                    current <=> root.theme-index;
-                                    picked(i) => { root.theme-picked(i); }
+                            if root.keys-hint != "": Text { text: root.keys-hint; color: Theme.muted; font-size: 12px; overflow: TextOverflow.elide; }
+
+                            // ---- Как отвечать ----
+                            SectionTitle { text: @tr("Как отвечать"); }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                StyleCard { title: @tr("Коротко"); sample: "x = 5"; selected: root.style-index == 0; tip: @tr("Только ответ, без объяснений"); clicked => { root.style-picked(0); } }
+                                StyleCard { title: @tr("С объяснением"); sample: @tr("x = 5 и почему"); selected: root.style-index == 1; tip: @tr("Ответ и пара предложений, почему так"); clicked => { root.style-picked(1); } }
+                                StyleCard { title: @tr("Подробно"); sample: @tr("Шаги 1, 2, 3…"); selected: root.style-index == 2; tip: @tr("Решение по шагам. Нейросеть думает дольше"); clicked => { root.style-picked(2); } }
+                            }
+                            if root.style-index < 0: Text { text: @tr("Сейчас свой промпт — он в «Расширенных»"); color: Theme.muted; font-size: 12px; overflow: TextOverflow.elide; }
+
+                            // ---- Вид ----
+                            Group {
+                                title: @tr("Вид");
+                                SettingRow {
+                                    icon: @image-url("icons/l-theme.svg");
+                                    label: @tr("Тема");
+                                    Segmented {
+                                        width: 252px;
+                                        items: [@tr("Как в Windows"), @tr("Тёмная"), @tr("Светлая")];
+                                        current <=> root.theme-index;
+                                        picked(i) => { root.theme-picked(i); }
+                                    }
                                 }
-                                Label { text: @tr("Прозрачность окна: ") + Math.round(root.opacity-pct) + "%"; }
-                                OpacitySlider {
-                                    value <=> root.opacity-pct;
-                                    changed(v) => { root.opacity-changed(v); }
-                                }
-                                Label { text: @tr("Акцентный цвет"); }
-                                HorizontalLayout {
-                                    spacing: 6px;
-                                    alignment: start;
-                                    for name in ["green", "pink", "blue", "red", "orange", "violet"]: Rectangle {
-                                        property <bool> picked: Theme.accent-name == name;
-                                        width: 30px;
-                                        height: 30px;
-                                        Rectangle {
-                                            // the chosen colour gets a ring, the hovered one grows a little
-                                            width: dta.has-hover || parent.picked ? 26px : 22px;
-                                            height: self.width;
-                                            border-radius: self.width / 2;
-                                            background: Theme.accent-of(name, Theme.dark);
-                                            border-width: parent.picked ? 2px : 0px;
-                                            border-color: Theme.fg;
-                                            animate width { duration: 150ms; easing: ease-out; }
-                                            animate border-width { duration: 150ms; }
-                                        }
-                                        dta := TouchArea {
-                                            mouse-cursor: MouseCursor.pointer;
+                                SettingRow {
+                                    icon: @image-url("icons/l-palette.svg");
+                                    label: @tr("Цвет");
+                                    HorizontalLayout {
+                                        spacing: 0px;
+                                        for name in ["violet", "blue", "green", "pink", "orange", "red", "graphite"]: ColorDot {
+                                            dot-color: Theme.accent-of(name, Theme.dark);
+                                            picked: Theme.accent-name == name;
                                             clicked => { root.custom-open = false; root.accent-picked(name); }
                                         }
-                                    }
-                                    // own colour: a rainbow dot that opens the palette
-                                    Rectangle {
-                                        property <bool> picked: Theme.accent-name == "custom";
-                                        width: 30px;
-                                        height: 30px;
-                                        Rectangle {
-                                            width: cta.has-hover || parent.picked || root.custom-open ? 26px : 22px;
-                                            height: self.width;
-                                            border-radius: self.width / 2;
-                                            border-width: parent.picked ? 2px : 0px;
-                                            border-color: Theme.fg;
-                                            animate width { duration: 150ms; easing: ease-out; }
-                                            animate border-width { duration: 150ms; }
-                                            // the rainbow is a picture: gradients do not get round corners
-                                            Image { source: @image-url("icons/rainbow.svg"); width: parent.width; height: parent.height; }
-                                            // the chosen own colour sits in the middle
-                                            if parent.picked: Rectangle {
-                                                width: 10px;
-                                                height: 10px;
-                                                border-radius: 5px;
-                                                background: Theme.custom-accent;
-                                                border-width: 1px;
-                                                border-color: #00000040;
-                                            }
-                                        }
-                                        cta := TipArea {
-                                            tip: @tr("Свой цвет: палитра, HEX или RGB");
-                                            mouse-cursor: MouseCursor.pointer;
+                                        ColorDot {
+                                            rainbow: true;
+                                            dot-color: transparent;
+                                            picked: Theme.accent-name == "custom";
+                                            tip: @tr("Свой цвет");
                                             clicked => {
                                                 root.custom-open = !root.custom-open;
                                                 if (root.custom-open) { root.accent-picked("custom"); }
@@ -1609,234 +2239,417 @@ export component MainWindow inherits Window {
                                         }
                                     }
                                 }
-                                if root.custom-open: AccentPicker {
-                                    h <=> root.custom-h;
-                                    s <=> root.custom-s;
-                                    v <=> root.custom-v;
-                                    text <=> root.custom-text;
-                                    picked(c) => { root.custom-color-picked(c); }
-                                    text-edited(t) => { root.custom-text-edited(t); }
+                                if root.custom-open: VerticalLayout {
+                                    padding-bottom: 10px;
+                                    AccentPicker {
+                                        h <=> root.custom-h;
+                                        s <=> root.custom-s;
+                                        v <=> root.custom-v;
+                                        text <=> root.custom-text;
+                                        picked(c) => { root.custom-color-picked(c); }
+                                        text-edited(t) => { root.custom-text-edited(t); }
+                                    }
                                 }
-                                Label { text: @tr("Размер текста ответа"); }
-                                StepSlider {
-                                    steps: root.text-scales;
-                                    unit: " %";
-                                    index <=> root.text-scale-index;
-                                    changed(i) => { root.text-scale-changed(i); }
+                                SettingRow {
+                                    icon: @image-url("icons/l-drop.svg");
+                                    label: @tr("Прозрачность");
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        OpacitySlider {
+                                            width: 110px;
+                                            value <=> root.opacity-pct;
+                                            changed(v) => { root.opacity-changed(v); }
+                                        }
+                                        Text { text: Math.round(root.opacity-pct) + "%"; color: Theme.muted; font-size: 12px; vertical-alignment: center; min-width: 34px; }
+                                    }
                                 }
-                                Check { label: @tr("Поверх окон"); checked <=> root.overlay-mode; }
-                                Label {
-                                    text: @tr("Короткий ответ в маленьком окне, которое не забирает фокус и пропускает клики. Работает над играми (в окне или без рамки), видео и лекциями.");
-                                    font-size: 10px;
-                                    wrap: TextWrap.word-wrap;
+                                SettingRow {
+                                    icon: @image-url("icons/l-textsize.svg");
+                                    label: @tr("Размер текста");
+                                    Stepper {
+                                        steps: root.text-scales;
+                                        unit: " %";
+                                        index <=> root.text-scale-index;
+                                        changed(i) => { root.text-scale-changed(i); }
+                                    }
                                 }
-                                if root.overlay-mode: Label { text: @tr("Размер текста в этом окне. Оно само подстраивается под ответ."); wrap: TextWrap.word-wrap; }
-                                if root.overlay-mode: StepSlider {
-                                    steps: root.overlay-fonts;
-                                    index <=> root.overlay-font-index;
+                                SettingRow {
+                                    icon: @image-url("icons/l-layers.svg");
+                                    label: @tr("Поверх окон");
+                                    sub: @tr("для игр и видео");
+                                    tip: @tr("Короткий ответ в маленьком окне поверх всего.\nОно не забирает фокус и пропускает клики");
+                                    last: !root.overlay-mode;
+                                    Toggle { checked <=> root.overlay-mode; toggled => { root.overlay-changed(); } }
                                 }
-                                if root.overlay-mode: HorizontalLayout {
-                                    alignment: start;
-                                    spacing: 10px;
-                                    Label { text: @tr("Так будет выглядеть:"); vertical-alignment: center; }
-                                    OverlaySample { text: "B"; font: root.overlay-fonts[root.overlay-font-index] * 1px; }
-                                    OverlaySample { text: @tr("Канберра"); font: root.overlay-fonts[root.overlay-font-index] * 1px; }
+                                if root.overlay-mode: SettingRow {
+                                    icon: @image-url("icons/l-textsize.svg");
+                                    label: @tr("Текст поверх окон");
+                                    last: true;
+                                    Stepper {
+                                        steps: root.overlay-fonts;
+                                        unit: " px";
+                                        index <=> root.overlay-font-index;
+                                        changed(i) => { root.setting-changed(); }
+                                    }
                                 }
                             }
 
-                            Card {
-                                index: "03";
+                            // ---- Расширенные: blocks by what they are for ----
+                            if root.advanced: Group {
+                                title: @tr("Клавиши");
+                                SettingRow {
+                                    icon: @image-url("icons/l-keyboard.svg");
+                                    label: @tr("Режим");
+                                    tip: @tr("Одна на всё: Alt+W сам решает — текст или экран.\nОтдельные: своя клавиша на каждое действие");
+                                    Segmented {
+                                        width: 200px;
+                                        items: [@tr("Одна на всё"), @tr("Отдельные")];
+                                        current <=> root.key-mode-index;
+                                        picked(i) => { root.key-mode-picked(i == 0); }
+                                    }
+                                }
+                                FoldRow { icon: @image-url("icons/l-keyboard.svg"); label: @tr("Ещё клавиши"); sub: root.smart-keys ? @tr("пометка, повтор") : @tr("повтор запроса"); open <=> root.fold-keys; last: true; }
+                                if root.fold-keys: VerticalLayout {
+                                    spacing: 2px;
+                                    padding-top: 6px;
+                                    padding-bottom: 10px;
+                                    for k in root.extra-keys: VerticalLayout {
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            KeyCapture {
+                                                keys: k.keys;
+                                                bad: k.bad;
+                                                key(t, c, a, s, m) => { root.hotkey-key(k.slot, t, c, a, s, m); }
+                                                cancelled => { root.hotkey-cancelled(); }
+                                                started => { root.hotkey-capture(true); }
+                                                ended => { root.hotkey-capture(false); }
+                                            }
+                                            Text { text: k.label; color: Theme.fg; font-size: 12px; vertical-alignment: center; overflow: TextOverflow.elide; horizontal-stretch: 1; }
+                                        }
+                                        if k.warn != "": Text { text: k.warn; color: k.bad ? Theme.danger : Theme.warn; font-size: 12px; overflow: TextOverflow.elide; }
+                                    }
+                                    HorizontalLayout {
+                                        alignment: start;
+                                        padding-top: 6px;
+                                        Button { text: @tr("Клавиши по умолчанию"); clicked => { root.reset-hotkeys(); } }
+                                    }
+                                }
+                            }
+                            if root.advanced: Group {
                                 title: @tr("Ответы");
-                                Label { text: @tr("Заготовки"); }
+                                if root.provider-index == 0: SettingRow {
+                                    icon: @image-url("icons/l-cpu.svg");
+                                    label: @tr("Модель");
+                                    Select {
+                                        width: 180px;
+                                        list-width: 250px;
+                                        model: root.gemini-models;
+                                        short: root.gemini-models-short;
+                                        current-index <=> root.model-index;
+                                        selected => { root.model-picked(); }
+                                    }
+                                }
+                                if root.provider-index == 0 && root.model-index == root.gemini-models.length - 1: VerticalLayout {
+                                    padding-bottom: 8px;
+                                    Field {
+                                        text <=> root.model-custom;
+                                        placeholder: @tr("Например: gemini-3.8-flash");
+                                        accepted => { root.model-picked(); }
+                                        focus-lost => { root.model-picked(); }
+                                    }
+                                }
+                                if root.provider-index == 1: SettingRow {
+                                    icon: @image-url("icons/l-cpu.svg");
+                                    label: @tr("Модель");
+                                    Text { text: "Qwen 3.8 · 27B"; color: Theme.muted; font-size: 12px; }
+                                }
+                                FoldRow { icon: @image-url("icons/l-text.svg"); label: @tr("Свой промпт"); sub: @tr("инструкция нейросети"); open <=> root.fold-prompt; }
+                                if root.fold-prompt: VerticalLayout {
+                                    spacing: 8px;
+                                    padding-top: 8px;
+                                    padding-bottom: 10px;
+                                    FocusScope {
+                                        capture-key-pressed(e) => {
+                                            if (e.modifiers.control && !e.modifiers.alt) {
+                                                if (e.text == "м" || e.text == "М") { pe.paste(); return accept; }
+                                                if (e.text == "ф" || e.text == "Ф") { pe.select-all(); return accept; }
+                                                if (e.text == "с" || e.text == "С") { pe.copy(); return accept; }
+                                                if (e.text == "ч" || e.text == "Ч") { pe.cut(); return accept; }
+                                            }
+                                            return reject;
+                                        }
+                                        VerticalLayout {
+                                            pe := TextEdit {
+                                                height: 110px;
+                                                font-size: 12px;
+                                                wrap: TextWrap.word-wrap;
+                                                text <=> root.prompt-text;
+                                            }
+                                        }
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        alignment: start;
+                                        Button { text: @tr("Сохранить"); primary: true; clicked => { root.prompt-saved(); } }
+                                        Button { text: @tr("Сбросить"); tip: @tr("Вернуть встроенный промпт «Коротко»"); clicked => { root.style-picked(0); } }
+                                    }
+                                }
+                                FoldRow { icon: @image-url("icons/l-sparkles.svg"); label: @tr("Кнопки под ответом"); sub: @tr("Объясни, Короче…"); open <=> root.fold-actions; last: true; }
+                                if root.fold-actions: VerticalLayout {
+                                    spacing: 6px;
+                                    padding-top: 8px;
+                                    padding-bottom: 10px;
+                                    for a[ai] in root.action-items: HorizontalLayout {
+                                        spacing: 6px;
+                                        Field {
+                                            width: 96px;
+                                            text: a.label;
+                                            font-size: 12px;
+                                            placeholder: @tr("Подпись");
+                                            edited => { root.action-edited(ai, self.text, a.prompt); }
+                                        }
+                                        Field {
+                                            text: a.prompt;
+                                            font-size: 12px;
+                                            placeholder: @tr("Что попросить");
+                                            edited => { root.action-edited(ai, a.label, self.text); }
+                                        }
+                                        IconButton { y: 2px; icon: @image-url("icons/l-close.svg"); tip: @tr("Убрать кнопку"); clicked => { root.action-remove(ai); } }
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        alignment: start;
+                                        if root.action-items.length < 3: Button { text: @tr("Добавить"); clicked => { root.action-add(); } }
+                                        if root.actions-custom: Button { text: @tr("По умолчанию"); clicked => { root.actions-reset(); } }
+                                    }
+                                }
+                            }
+                            if root.advanced: Group {
+                                title: @tr("Скриншоты");
+                                SettingRow {
+                                    icon: @image-url("icons/l-crop.svg");
+                                    label: @tr("Способ");
+                                    last: true;
+                                    tip: @tr("Выделить область: экран замирает, обведи нужное мышью.\nВесь экран: сразу монитор под курсором.\nНожницы: встроенный инструмент Windows");
+                                    Select {
+                                        width: 170px;
+                                        model: [@tr("Выделить область"), @tr("Весь экран"), @tr("Ножницы Windows")];
+                                        current-index <=> root.shot-mode;
+                                        selected => { root.setting-changed(); }
+                                    }
+                                }
+                            }
+                            if root.advanced: Group {
+                                title: @tr("Программа");
+                                SettingRow {
+                                    icon: @image-url("icons/l-history.svg");
+                                    label: @tr("Сохранять историю");
+                                    sub: @tr("только на этом ПК");
+                                    Toggle { checked <=> root.history-enabled; toggled => { root.setting-changed(); } }
+                                }
+                                SettingRow {
+                                    icon: @image-url("icons/l-power.svg");
+                                    label: @tr("Запуск с Windows");
+                                    Toggle { checked <=> root.autostart; toggled => { root.setting-changed(); } }
+                                }
+                                SettingRow {
+                                    icon: @image-url("icons/l-tray.svg");
+                                    label: @tr("Значок в трее");
+                                    sub: root.show-tray ? "" : @tr("выход — в «О программе»");
+                                    Toggle { checked <=> root.show-tray; toggled => { root.setting-changed(); } }
+                                }
+                                SettingRow {
+                                    icon: @image-url("icons/l-download.svg");
+                                    label: @tr("Обновления");
+                                    sub: root.update-status;
+                                    last: true;
+                                    HorizontalLayout {
+                                        spacing: 10px;
+                                        LinkText { text: @tr("Проверить"); vertical-alignment: center; clicked => { root.check-updates(); } }
+                                        Toggle { y: 2px; checked <=> root.auto-update; toggled => { root.setting-changed(); } }
+                                    }
+                                }
+                            }
+
+                            // ---- Что нового ----
+                            Rectangle {
+                                border-radius: 10px;
+                                background: Theme.surface;
+                                border-width: 1px;
+                                border-color: Theme.line;
+                                VerticalLayout {
+                                    Rectangle {
+                                        height: 40px;
+                                        background: nta.has-hover ? Theme.hover : transparent;
+                                        border-radius: 10px;
+                                        HorizontalLayout {
+                                            padding-left: 12px;
+                                            padding-right: 12px;
+                                            spacing: 8px;
+                                            Logo { y: (parent.height - self.height) / 2; }
+                                            Text { text: root.news-title; color: Theme.fg; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+                                            Image {
+                                                source: root.news-open ? @image-url("icons/l-chevron-down.svg") : @image-url("icons/l-arrow.svg");
+                                                width: 14px;
+                                                height: 14px;
+                                                y: (parent.height - self.height) / 2;
+                                                colorize: Theme.muted;
+                                                transform-rotation: root.news-open ? 180deg : 0deg;
+                                            }
+                                        }
+                                        nta := TouchArea {
+                                            mouse-cursor: MouseCursor.pointer;
+                                            clicked => { root.news-open = !root.news-open; }
+                                        }
+                                    }
+                                    if root.news-open: VerticalLayout {
+                                        padding: 12px;
+                                        padding-top: 2px;
+                                        spacing: 6px;
+                                        for v[vi] in root.news: vrow := VerticalLayout {
+                                            property <bool> unfolded: vi == 0;
+                                            spacing: 6px;
+                                            Rectangle {
+                                                height: 26px;
+                                                HorizontalLayout {
+                                                    spacing: 8px;
+                                                    Text { text: v.version; color: Theme.fg; font-size: 12px; font-weight: 600; vertical-alignment: center; }
+                                                    Text { text: v.date; color: Theme.subtle; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; }
+                                                    Image {
+                                                        source: @image-url("icons/l-chevron-down.svg");
+                                                        width: 12px;
+                                                        height: 12px;
+                                                        y: (parent.height - self.height) / 2;
+                                                        colorize: Theme.subtle;
+                                                        transform-rotation: vrow.unfolded ? 180deg : 0deg;
+                                                    }
+                                                }
+                                                TouchArea {
+                                                    mouse-cursor: MouseCursor.pointer;
+                                                    clicked => { vrow.unfolded = !vrow.unfolded; }
+                                                }
+                                            }
+                                            if vrow.unfolded: VerticalLayout {
+                                                spacing: 6px;
+                                                padding-bottom: 6px;
+                                                for it in v.items: HorizontalLayout {
+                                                    spacing: 8px;
+                                                    NewsTag { tag: it.tag; y: 1px; }
+                                                    Text {
+                                                        width: set-sv.visible-width - 28px - 24px - 76px - 8px;
+                                                        height: self.preferred-height;
+                                                        text: it.text;
+                                                        color: Theme.fg;
+                                                        font-size: 12px;
+                                                        wrap: TextWrap.word-wrap;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // ---- О программе ----
+                            // looks like the other rows that open: a word and an arrow
+                            Rectangle {
+                                height: 30px;
+                                accessible-role: button;
+                                accessible-label: @tr("О программе");
+                                accessible-action-default => { root.about-open = !root.about-open; }
                                 HorizontalLayout {
                                     spacing: 6px;
                                     alignment: start;
-                                    ActionButton { text: @tr("Только ответ"); tip: @tr("Короткий ответ без объяснений (как раньше)"); clicked => { root.prompt-preset(0); } }
-                                    ActionButton { text: @tr("С пояснением"); tip: @tr("Ответ и пара предложений, почему так"); clicked => { root.prompt-preset(1); } }
-                                    ActionButton { text: @tr("Подробно"); tip: @tr("Подробное решение по шагам.\nМодель думает дольше"); clicked => { root.prompt-preset(2); } }
-                                }
-                                Label { text: @tr("Промпт, который получает нейросеть (можно переписать своими словами, в том числе по-русски)"); wrap: TextWrap.word-wrap; }
-                                FocusScope {
-                                    capture-key-pressed(e) => {
-                                        if (e.modifiers.control && !e.modifiers.alt) {
-                                            if (e.text == "м" || e.text == "М") { pe.paste(); return accept; }
-                                            if (e.text == "ф" || e.text == "Ф") { pe.select-all(); return accept; }
-                                            if (e.text == "с" || e.text == "С") { pe.copy(); return accept; }
-                                            if (e.text == "ч" || e.text == "Ч") { pe.cut(); return accept; }
-                                        }
-                                        return reject;
-                                    }
-                                    VerticalLayout {
-                                        pe := TextEdit {
-                                            height: 110px;
-                                            font-size: 12px;
-                                            wrap: TextWrap.word-wrap;
-                                            text <=> root.prompt-text;
-                                        }
-                                    }
-                                }
-                                HorizontalLayout {
-                                    spacing: 8px;
-                                    Label {
-                                        text: @tr("Изменённый промпт действует и в режиме «Поверх окон».");
-                                        font-size: 10px;
-                                        wrap: TextWrap.word-wrap;
-                                        horizontal-stretch: 1;
+                                    Text {
+                                        text: @tr("О программе");
+                                        color: about-ta.has-hover ? Theme.fg : Theme.muted;
+                                        font-size: 12px;
+                                        font-weight: 600;
                                         vertical-alignment: center;
                                     }
-                                    ActionButton { text: @tr("Сбросить"); tip: @tr("Вернуть встроенный промпт «Только ответ»"); clicked => { root.prompt-preset(0); } }
-                                }
-                                Check { label: @tr("Короткий ответ, подробности по кнопке"); checked <=> root.two-level; }
-                                Label {
-                                    text: @tr("Сначала короткий ответ, а объяснение раскрывается кнопкой «Подробнее». Выключите, чтобы получать ответ целиком.");
-                                    font-size: 10px;
-                                    wrap: TextWrap.word-wrap;
-                                }
-                            }
-
-                            Card {
-                                index: "04";
-                                title: @tr("Поведение");
-                                Check { label: @tr("Запускать вместе с Windows"); checked <=> root.autostart; }
-                                Check { label: @tr("Отображать приложение в трее"); checked <=> root.show-tray; }
-                                if !root.show-tray: Label {
-                                    text: @tr("Без значка в трее окно открывается горячими клавишами (") + root.free-hotkey + @tr("), а выйти можно кнопкой «Закрыть программу» внизу настроек.");
-                                    font-size: 10px;
-                                    wrap: TextWrap.word-wrap;
-                                }
-                                HorizontalLayout {
-                                    spacing: 8px;
-                                    Check { label: @tr("Сохранять историю (зашифрованно)"); checked <=> root.history-enabled; horizontal-stretch: 1; }
-                                    ConfirmButton { height: 26px; text: @tr("Очистить историю"); confirm-text: @tr("Удалить всю историю?"); confirmed => { root.clear-history(); } }
-                                }
-                                Label { text: @tr("Скриншот (") + root.shot-hotkey + ")"; }
-                                Segmented {
-                                    items: [@tr("Выделить область"), @tr("Весь экран"), @tr("Ножницы Windows")];
-                                    tips: [
-                                        @tr("Экран замирает, обведи нужное мышью.\nКлик без выделения — весь экран"),
-                                        @tr("Сразу весь монитор под курсором, без выделения"),
-                                        @tr("Встроенный инструмент Windows (как раньше)"),
-                                    ];
-                                    current <=> root.shot-mode;
-                                }
-                                Label {
-                                    text: root.shot-mode == 0 ? @tr("Экран замирает, обведи нужное мышью. Клик без выделения — весь экран, Esc — отмена. До 4 снимков подряд.")
-                                        : root.shot-mode == 1 ? @tr("Снимается весь монитор под курсором, сразу открывается окно с вопросом. До 4 снимков подряд.")
-                                        : @tr("Открываются «Ножницы» Windows; после выделения снимок попадает в окно с вопросом.");
-                                    font-size: 10px;
-                                    wrap: TextWrap.word-wrap;
-                                }
-                            }
-
-                            Card {
-                                index: "05";
-                                title: @tr("Горячие клавиши");
-                                for label[i] in root.hotkey-labels: HorizontalLayout {
-                                    spacing: 8px;
-                                    Text { text: label; color: Theme.fg; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; }
-                                    HotkeyField {
-                                        text: root.hotkey-values[i];
-                                        key(t, c, a, s, m) => { root.hotkey-key(i, t, c, a, s, m); }
-                                        cancelled => { root.hotkey-cancelled(); }
+                                    Image {
+                                        source: @image-url("icons/l-chevron-down.svg");
+                                        width: 14px;
+                                        height: 14px;
+                                        y: (parent.height - self.height) / 2;
+                                        colorize: about-ta.has-hover ? Theme.fg : Theme.muted;
+                                        transform-rotation: root.about-open ? 180deg : 0deg;
+                                        animate transform-rotation { duration: 180ms; easing: ease-out; }
                                     }
                                 }
-                                HorizontalLayout {
-                                    alignment: start;
-                                    ActionButton { text: @tr("По умолчанию"); tip: @tr("Вернуть Alt+Q, Alt+W, Alt+E, Alt+S"); clicked => { root.reset-hotkeys(); } }
+                                about-ta := TouchArea {
+                                    mouse-cursor: MouseCursor.pointer;
+                                    clicked => { root.about-open = !root.about-open; }
                                 }
                             }
-
-                            Card {
-                                index: "06";
-                                title: @tr("Обновления");
-                                HorizontalLayout {
-                                    spacing: 8px;
-                                    Check { label: @tr("Проверять обновления автоматически"); checked <=> root.auto-update; horizontal-stretch: 1; }
-                                    LinkText { text: @tr("Проверить сейчас"); vertical-alignment: center; tip: @tr("Спросить у GitHub, есть ли новая версия"); clicked => { root.check-updates(); } }
+                            if root.about-open: Rectangle {
+                                border-radius: 10px;
+                                background: Theme.surface;
+                                border-width: 1px;
+                                border-color: Theme.line;
+                                VerticalLayout {
+                                    padding: 12px;
+                                    spacing: 10px;
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        Logo { size: 28px; }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            Text { text: "Nortex Assist"; color: Theme.fg; font-size: 13px; font-weight: 600; }
+                                            Text { text: root.version-text; color: Theme.muted; font-size: 12px; }
+                                        }
+                                        Rectangle { horizontal-stretch: 1; }
+                                        LangToggle { y: 4px; en: root.lang-en; clicked => { root.toggle-lang(); } }
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        alignment: start;
+                                        Button { text: @tr("Закрыть программу"); tip: @tr("Полностью выйти. Горячие клавиши перестанут работать"); clicked => { root.exit-app(); } }
+                                        Button { text: @tr("Удалить программу"); danger: true; tip: @tr("Попросит подтвердить, кнопка включится через 5 секунд"); clicked => { root.uninstall-ask(); } }
+                                    }
                                 }
-                                if root.update-status != "": Label { text: root.update-status; wrap: TextWrap.word-wrap; }
                             }
-                        }
-                    }
-                    Rectangle {
-                        height: 52px;
-                        HorizontalLayout {
-                            padding: 10px;
-                            padding-left: 12px;
-                            spacing: 8px;
-                            IconButton {
-                                y: 1px;
-                                icon: @image-url("icons/trash.svg");
-                                tip: @tr("Удалить программу.\nПопросит подтвердить, кнопка включится через 5 секунд");
-                                clicked => { root.uninstall-ask(); }
-                            }
-                            LangToggle {
-                                y: 3px;
-                                en: root.lang-en;
-                                clicked => { root.toggle-lang(); }
-                            }
-                            Text {
-                                text: root.saved-text;
-                                color: Theme.muted;
-                                font-size: 11px;
-                                vertical-alignment: center;
-                                horizontal-stretch: 1;
-                                overflow: TextOverflow.elide;
-                            }
-                            ActionButton { text: @tr("Закрыть программу"); tip: @tr("Сохранить настройки и полностью выйти.\nГорячие клавиши перестанут работать"); clicked => { root.exit-app(); } }
-                            ActionButton { text: @tr("Готово"); tip: @tr("Сохранить настройки и вернуться к ответу"); primary: true; clicked => { root.save-settings(); } }
                         }
                     }
                 }
 
-                // ---- composer: grows in from the bottom ----
+                // ---- composer ----
                 composer-box := Rectangle {
                     property <bool> shown: root.composer-on && !root.panel-open && !root.overlay-view;
-                    // the input field grows with the text (up to about six lines), then it scrolls inside
-                    property <length> field-h: min(max(44px, inp.preferred-height + 26px), 140px);
+                    // the field is one line and grows with the text (up to about five lines)
+                    property <length> field-h: (root.recording || root.transcribing) ? 40px : min(max(40px, inp.preferred-height + 20px), 132px);
                     visible: shown;
-                    height: shown ? 14px + self.field-h + (root.thumbs.length > 0 ? 76px : 0px) + (root.files.length > 0 ? 36px : 0px) : 0px;
-                    animate height { duration: 180ms; easing: ease-out; }
+                    height: shown ? 10px + self.field-h + (root.thumbs.length > 0 ? 72px : 0px) + (root.files.length > 0 ? 34px : 0px) : 0px;
+                    animate height { duration: 160ms; easing: ease-out; }
                     clip: true;
                     VerticalLayout {
-                        padding: 10px;
-                        padding-top: 4px;
-                        spacing: 8px;
+                        padding: 8px;
+                        padding-top: 2px;
+                        spacing: 6px;
                         alignment: end;
                         if root.thumbs.length > 0: HorizontalLayout {
                             spacing: 8px;
                             alignment: start;
-                            for t[i] in root.thumbs: thumb := Rectangle {
-                                property <bool> shown: false;
-                                Timer { interval: 16ms; running: !thumb.shown; triggered => { thumb.shown = true; } }
+                            for t[i] in root.thumbs: Rectangle {
                                 width: 64px;
                                 height: 64px;
-                                opacity: shown ? 1 : 0;
-                                animate opacity { duration: 200ms; easing: ease-out; }
+                                border-radius: 9px;
+                                border-width: 1px;
+                                border-color: Theme.line-strong;
+                                clip: true;
+                                Image { source: t.img; image-fit: ImageFit.cover; width: parent.width; height: parent.height; }
                                 Rectangle {
-                                    // pops in from slightly smaller
-                                    width: parent.shown ? parent.width : parent.width - 10px;
-                                    height: self.width;
-                                    animate width { duration: 220ms; easing: ease-out; }
-                                    border-radius: 9px;
-                                    border-width: 1px;
-                                    border-color: Theme.line-strong;
-                                    clip: true;
-                                    Image { source: t.img; image-fit: ImageFit.cover; width: parent.width; height: parent.height; }
-                                    // hover: darken and show a cross, since a click removes the picture
-                                    Rectangle {
-                                        background: #000000;
-                                        opacity: tta.has-hover ? 0.55 : 0;
-                                        animate opacity { duration: 140ms; }
-                                    }
-                                    Image {
-                                        source: @image-url("icons/close.svg");
-                                        width: 16px;
-                                        height: 16px;
-                                        colorize: #ffffff;
-                                        opacity: tta.has-hover ? 1 : 0;
-                                        animate opacity { duration: 140ms; }
-                                    }
+                                    background: #000000;
+                                    opacity: tta.has-hover ? 0.55 : 0;
+                                    animate opacity { duration: 140ms; }
+                                }
+                                Image {
+                                    source: @image-url("icons/l-close.svg");
+                                    width: 16px;
+                                    height: 16px;
+                                    colorize: #ffffff;
+                                    opacity: tta.has-hover ? 1 : 0;
+                                    animate opacity { duration: 140ms; }
                                 }
                                 tta := TipArea {
                                     tip: @tr("Убрать эту картинку");
@@ -1853,7 +2666,7 @@ export component MainWindow inherits Window {
                                 width: min(fchip.preferred-width + 8px, 190px);
                                 height: 28px;
                                 border-radius: 8px;
-                                background: Theme.accent-soft;
+                                background: Theme.raised;
                                 fchip := HorizontalLayout {
                                     padding-left: 8px;
                                     padding-right: 6px;
@@ -1863,12 +2676,12 @@ export component MainWindow inherits Window {
                                         width: 13px;
                                         height: 13px;
                                         y: (parent.height - self.height) / 2;
-                                        colorize: Theme.accent-text;
+                                        colorize: Theme.muted;
                                     }
-                                    Text { text: f.name; color: Theme.fg; font-size: 11px; vertical-alignment: center; overflow: TextOverflow.elide; }
-                                    if f.info != "": Text { text: f.info; color: Theme.muted; font-size: 10px; vertical-alignment: center; }
+                                    Text { text: f.name; color: Theme.fg; font-size: 12px; vertical-alignment: center; overflow: TextOverflow.elide; }
+                                    if f.info != "": Text { text: f.info; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
                                     Image {
-                                        source: @image-url("icons/close.svg");
+                                        source: @image-url("icons/l-close.svg");
                                         width: 11px;
                                         height: 11px;
                                         y: (parent.height - self.height) / 2;
@@ -1887,42 +2700,36 @@ export component MainWindow inherits Window {
                             background: Theme.field;
                             border-radius: 12px;
                             border-width: 1px;
-                            border-color: inp.has-focus ? Theme.accent : Theme.line;
+                            border-color: inp.has-focus ? Theme.accent.with-alpha(0.7) : Theme.line-strong;
                             animate border-color { duration: 160ms; }
                             HorizontalLayout {
-                                padding-left: 7px;
-                                padding-right: 7px;
-                                padding-top: 7px;
-                                padding-bottom: 7px;
-                                spacing: 6px;
+                                padding: 5px;
+                                padding-left: 6px;
+                                spacing: 4px;
                                 // the buttons stay at the bottom edge while the field grows upwards
                                 VerticalLayout {
-                                    width: 30px;
                                     alignment: end;
-                                    Rectangle {
+                                    IconButton {
+                                        icon: @image-url("icons/l-clip.svg");
+                                        width: 30px;
                                         height: 30px;
-                                        border-radius: 9px;
-                                        background: cla.pressed ? Theme.line-strong : cla.has-hover ? Theme.line : transparent;
-                                        animate background { duration: 140ms; }
-                                        Image {
-                                            source: @image-url("icons/clip.svg");
-                                            width: 16px;
-                                            height: 16px;
-                                            x: (parent.width - self.width) / 2;
-                                            y: (parent.height - self.height) / 2;
-                                            colorize: cla.has-hover ? Theme.accent-text : Theme.muted;
-                                            animate colorize { duration: 140ms; }
-                                        }
-                                        cla := TipArea {
-                                            tip: @tr("Прикрепить файлы.\nТекст из них попадёт в вопрос");
-                                            mouse-cursor: MouseCursor.pointer;
-                                            clicked => { root.attach-pick(false); }
-                                        }
+                                        tip: @tr("Прикрепить файлы.\nТекст из них попадёт в вопрос");
+                                        clicked => { root.attach-pick(false); }
                                     }
                                 }
                                 Rectangle {
                                     horizontal-stretch: 1;
+                                    // voice: recording or turning speech into text, instead of the text
+                                    if root.recording || root.transcribing: HorizontalLayout {
+                                        spacing: 8px;
+                                        padding-left: 4px;
+                                        if root.recording: RecDot { y: (parent.height - self.height) / 2; }
+                                        if root.recording: Wave { levels: root.rec-levels; horizontal-stretch: 1; }
+                                        if root.recording: Text { text: root.rec-time; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
+                                        if root.transcribing: Thinking { text: @tr("Распознаю"); size: 13px; horizontal-stretch: 1; }
+                                    }
                                     FocusScope {
+                                        visible: !root.recording && !root.transcribing;
                                         width: parent.width;
                                         height: parent.height;
                                         capture-key-pressed(e) => {
@@ -1937,11 +2744,8 @@ export component MainWindow inherits Window {
                                             if (e.text == Key.Return && !e.modifiers.shift) { root.submit(inp.text); return accept; }
                                             return reject;
                                         }
-                                        // The text wraps onto new lines. A bare TextInput never scrolls by itself:
-                                        // `cursor-position-changed` below moves the Flickable (the standard LineEdit
-                                        // and TextEdit do the same), so the end of what is typed is always in view.
-                                        // The Flickable is 3px taller than the field on both sides, so the letters
-                                        // of the line with the cursor are not cut at the edge.
+                                        // The text wraps; a bare TextInput never scrolls by itself, so
+                                        // `cursor-position-changed` moves the Flickable to the cursor.
                                         comp-fl := Flickable {
                                             y: -3px;
                                             width: parent.width;
@@ -1955,9 +2759,11 @@ export component MainWindow inherits Window {
                                                 vertical-alignment: center;
                                                 text <=> root.composer-text;
                                                 color: Theme.fg;
-                                                font-size: 14px;
+                                                font-size: 13px;
                                                 single-line: false;
                                                 wrap: TextWrap.word-wrap;
+                                                selection-background-color: Theme.accent.with-alpha(0.35);
+                                                selection-foreground-color: Theme.fg;
                                                 cursor-position-changed(cpos) => {
                                                     if (cpos.y + comp-fl.content-y < 0px) {
                                                         comp-fl.content-y = -cpos.y;
@@ -1965,7 +2771,6 @@ export component MainWindow inherits Window {
                                                         comp-fl.content-y = comp-fl.height - cpos.y - 22px;
                                                     }
                                                 }
-                                                // text deleted: do not leave an empty strip under the last line
                                                 changed height => {
                                                     if (comp-fl.content-y < comp-fl.height - self.height) {
                                                         comp-fl.content-y = min(0px, comp-fl.height - self.height);
@@ -1974,41 +2779,50 @@ export component MainWindow inherits Window {
                                             }
                                         }
                                     }
-                                    if root.composer-text == "": Text {
+                                    if root.composer-text == "" && !root.recording && !root.transcribing: Text {
                                         y: 0;
                                         width: parent.width;
                                         height: parent.height;
                                         vertical-alignment: center;
                                         text: root.composer-placeholder;
                                         color: Theme.subtle;
-                                        font-size: 14px;
+                                        font-size: 13px;
                                         overflow: TextOverflow.elide;
                                     }
                                 }
                                 VerticalLayout {
-                                    width: 30px;
                                     alignment: end;
-                                    Rectangle {
+                                    IconButton {
+                                        icon: @image-url("icons/l-mic.svg");
+                                        width: 30px;
                                         height: 30px;
-                                        // grey at rest, lights up with the accent colour under the pointer
-                                        background: sta.pressed ? Theme.accent.darker(0.2) : sta.has-hover ? Theme.accent : Theme.line-strong;
+                                        active: root.recording;
+                                        tip: root.recording ? @tr("Закончить запись") : @tr("Сказать голосом: нажми, говори, нажми ещё раз.\nИли зажми ") + root.voice-key + @tr(" в любом месте");
+                                        clicked => { root.mic-clicked(); }
+                                    }
+                                }
+                                VerticalLayout {
+                                    alignment: end;
+                                    // send; while an answer is coming it stops it
+                                    Rectangle {
+                                        property <bool> lit: root.busy || root.composer-text != "" || root.thumbs.length > 0 || root.files.length > 0;
+                                        width: 30px;
+                                        height: 30px;
+                                        border-radius: 15px;
+                                        background: !self.lit ? Theme.line-strong : sta.pressed ? Theme.accent.darker(0.15) : sta.has-hover ? Theme.accent.brighter(0.06) : Theme.accent;
                                         animate background { duration: 140ms; }
-                                        border-radius: 9px;
                                         Image {
-                                            source: @image-url("icons/send.svg");
-                                            width: 14px;
-                                            height: 14px;
-                                            // the arrow nudges forward under the pointer
-                                            x: (parent.width - self.width) / 2 + (sta.has-hover ? 2px : 0px);
-                                            y: (parent.height - self.height) / 2 - (sta.has-hover ? 1px : 0px);
-                                            animate x, y { duration: 160ms; easing: ease-out; }
-                                            colorize: sta.has-hover || sta.pressed ? Theme.accent-ink : Theme.muted;
-                                            animate colorize { duration: 140ms; }
+                                            source: root.busy ? @image-url("icons/l-stop.svg") : @image-url("icons/l-arrow.svg");
+                                            width: root.busy ? 12px : 16px;
+                                            height: self.width;
+                                            colorize: parent.lit ? Theme.accent-ink : Theme.muted;
                                         }
                                         sta := TipArea {
-                                            tip: @tr("Отправить (Enter), Shift+Enter: новая строка.\nCtrl+V в поле вставляет картинку из буфера");
+                                            tip: root.busy ? @tr("Остановить ответ (Esc)") : @tr("Отправить (Enter). Shift+Enter — новая строка.\nCtrl+V в поле вставляет картинку из буфера");
                                             mouse-cursor: MouseCursor.pointer;
-                                            clicked => { root.submit(root.composer-text); }
+                                            clicked => {
+                                                if (root.busy) { root.stop(); } else { root.submit(root.composer-text); }
+                                            }
                                         }
                                     }
                                 }
@@ -2023,7 +2837,7 @@ export component MainWindow inherits Window {
                 visible: false;
                 text: root.thinking ? @tr("Думаю") : root.body-text;
                 font-size: root.ov-font;
-                font-weight: 500;
+                font-weight: 600;
             }
             ov-wrap := Text {
                 visible: false;
@@ -2031,27 +2845,16 @@ export component MainWindow inherits Window {
                 text: root.thinking ? @tr("Думаю") : root.body-text;
                 wrap: TextWrap.word-wrap;
                 font-size: root.ov-font;
-                font-weight: 500;
+                font-weight: 600;
             }
 
             // resize grip
             Rectangle {
                 visible: !root.overlay-view;
-                x: parent.width - 20px;
-                y: parent.height - 20px;
-                width: 20px;
-                height: 20px;
-                Path {
-                    x: 6px;
-                    y: 6px;
-                    width: 10px;
-                    height: 10px;
-                    viewbox-width: 10;
-                    viewbox-height: 10;
-                    commands: "M 9 1 L 1 9 M 9 5 L 5 9";
-                    stroke: gta.has-hover || gta.pressed ? Theme.accent-text : Theme.subtle;
-                    stroke-width: 1.2px;
-                }
+                x: parent.width - 16px;
+                y: parent.height - 16px;
+                width: 16px;
+                height: 16px;
                 gta := TipArea {
                     tip: @tr("Потяни, чтобы изменить размер окна");
                     mouse-cursor: MouseCursor.nwse-resize;
@@ -2068,21 +2871,21 @@ export component MainWindow inherits Window {
 
             // uninstall confirmation: the red button wakes up after five seconds
             if root.uninstall-open && !root.overlay-view: Rectangle {
-                background: #000000b8;
+                background: #000000b0;
                 TouchArea { }
                 Rectangle {
-                    width: min(parent.width - 40px, 360px);
+                    width: min(parent.width - 32px, 340px);
                     height: ucol.preferred-height;
                     x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
-                    background: Theme.raised;
-                    border-radius: 14px;
+                    background: Theme.surface;
+                    border-radius: 12px;
                     border-width: 1px;
                     border-color: Theme.line-strong;
                     ucol := VerticalLayout {
-                        padding: 18px;
+                        padding: 16px;
                         spacing: 10px;
-                        Text { text: @tr("Удалить Nortex Assist?"); color: Theme.fg; font-size: 16px; font-weight: 700; }
+                        Text { text: @tr("Удалить Nortex Assist?"); color: Theme.fg; font-size: 15px; font-weight: 600; }
                         Text {
                             text: @tr("Программа, её настройки, ключи API и история будут удалены с этого компьютера. Отменить это нельзя.");
                             color: Theme.muted;
@@ -2093,28 +2896,12 @@ export component MainWindow inherits Window {
                             spacing: 8px;
                             padding-top: 6px;
                             alignment: end;
-                            ActionButton { text: @tr("Отмена"); primary: true; clicked => { root.uninstall-cancel(); } }
-                            Rectangle {
-                                height: 30px;
-                                min-width: 110px;
-                                border-radius: 8px;
-                                border-width: 1px;
-                                border-color: Theme.danger;
-                                background: root.uninstall-left == 0 ? (uda.pressed ? Theme.danger.darker(0.2) : uda.has-hover ? Theme.danger.brighter(0.1) : Theme.danger) : transparent;
-                                animate background { duration: 140ms; }
-                                Text {
-                                    text: root.uninstall-left > 0 ? @tr("Удалить (") + root.uninstall-left + ")" : @tr("Удалить");
-                                    color: root.uninstall-left == 0 ? #1c0d0c : Theme.danger.with-alpha(0.7);
-                                    font-size: 12px;
-                                    font-weight: 600;
-                                    horizontal-alignment: center;
-                                    vertical-alignment: center;
-                                }
-                                uda := TouchArea {
-                                    enabled: root.uninstall-left == 0;
-                                    mouse-cursor: root.uninstall-left == 0 ? MouseCursor.pointer : MouseCursor.default;
-                                    clicked => { root.uninstall-confirm(); }
-                                }
+                            Button { text: @tr("Отмена"); primary: true; clicked => { root.uninstall-cancel(); } }
+                            Button {
+                                text: root.uninstall-left > 0 ? @tr("Удалить (") + root.uninstall-left + ")" : @tr("Удалить");
+                                danger: true;
+                                enabled: root.uninstall-left == 0;
+                                clicked => { root.uninstall-confirm(); }
                             }
                         }
                     }
@@ -2128,7 +2915,7 @@ export component MainWindow inherits Window {
                 width: min(toast-label.preferred-width + 28px, parent.width - 32px);
                 height: toast-label.preferred-height + 16px;
                 x: (parent.width - self.width) / 2;
-                y: parent.height - self.height - (root.settings-open ? 64px : root.composer-on && !root.panel-open ? composer-box.height + 16px : 18px) + (shown ? 0px : 10px);
+                y: parent.height - self.height - (root.composer-on && !root.panel-open ? composer-box.height + 12px : 16px) + (shown ? 0px : 10px);
                 opacity: shown ? 1 : 0;
                 animate y, opacity { duration: 200ms; easing: ease-out; }
                 background: Theme.raised;
@@ -2144,7 +2931,7 @@ export component MainWindow inherits Window {
                     text: root.toast-text;
                     color: Theme.fg;
                     font-size: 12px;
-                    overflow: TextOverflow.elide;
+                    wrap: TextWrap.word-wrap;
                 }
             }
 
@@ -2172,9 +2959,47 @@ export component MainWindow inherits Window {
                     y: 6px;
                     text: Tip.text;
                     color: Theme.fg;
-                    font-size: 11px;
+                    font-size: 12px;
                 }
             }
+        }
+    }
+}
+
+// Voice input while the window is closed: a small pill at the bottom of the screen.
+export component VoicePill inherits Window {
+    no-frame: true;
+    always-on-top: true;
+    background: transparent;
+    title: "Nortex Assist — voice";
+    default-font-family: "Segoe UI";
+    width: 300px;
+    height: 52px;
+    in property <[float]> levels;
+    in property <string> time-text: "0:00";
+    // 0 recording, 1 turning speech into text, 2 a problem (text in `message`)
+    in property <int> phase;
+    in property <string> message;
+    in property <string> hint: @tr("Отпусти — отправлю");
+    Rectangle {
+        x: 2px;
+        y: 2px;
+        width: parent.width - 4px;
+        height: parent.height - 4px;
+        border-radius: self.height / 2;
+        background: Theme.dark ? #232429f2 : #fafafcf2;
+        border-width: 1px;
+        border-color: Theme.line-strong;
+        HorizontalLayout {
+            padding-left: 16px;
+            padding-right: 18px;
+            spacing: 10px;
+            if root.phase == 0: RecDot { y: (parent.height - self.height) / 2; }
+            if root.phase == 0: Wave { levels: root.levels; width: 80px; }
+            if root.phase == 0: Text { text: root.time-text; color: Theme.fg; font-size: 12px; vertical-alignment: center; }
+            if root.phase == 0: Text { text: root.hint; color: Theme.muted; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; overflow: TextOverflow.elide; }
+            if root.phase == 1: Thinking { text: @tr("Распознаю"); size: 13px; color: Theme.fg; horizontal-stretch: 1; }
+            if root.phase == 2: Text { text: root.message; color: Theme.fg; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; wrap: TextWrap.word-wrap; }
         }
     }
 }
@@ -2213,7 +3038,6 @@ export component SnipWindow inherits Window {
     Image { width: parent.width; height: parent.height; source: root.shot; image-fit: fill; }
 
     // before a selection: the whole screen dims in; during it, four bands leave the selection bright
-    // dimmed from the first frame, so the screen never shows a bright frozen copy first
     if !root.started: Rectangle { background: root.dim; }
     if root.started: Rectangle { x: 0; y: 0; width: parent.width; height: root.sy; background: root.dim; }
     if root.started: Rectangle { x: 0; y: root.sy + root.sh; width: parent.width; height: parent.height - root.sy - root.sh; background: root.dim; }
@@ -2259,12 +3083,12 @@ export component SnipWindow inherits Window {
         animate y { duration: 260ms; easing: ease-out; }
         animate opacity { duration: 200ms; }
         border-radius: 18px;
-        background: #121416e6;
+        background: #1b1c20e6;
         border-width: 1px;
         border-color: #ffffff22;
         hint := Text {
             text: @tr("Выдели область мышью   ·   клик — весь экран   ·   Esc — отмена");
-            color: #f0f2ec;
+            color: #ececf0;
             font-size: 13px;
             vertical-alignment: center;
             horizontal-alignment: center;

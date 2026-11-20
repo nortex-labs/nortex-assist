@@ -93,17 +93,32 @@ impl History {
         self.load().clone()
     }
 
-    pub fn add(&mut self, enabled: bool, req: &Request, answer: &str) {
+    /// Saves a question (as it should be listed, see `describe`) with its answer; returns the entry's id.
+    pub fn add(&mut self, enabled: bool, title: &str, answer: &str) -> Option<i64> {
         if !enabled {
-            return;
+            return None;
         }
-        let q = describe(req);
         let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
-        let q: String = q.chars().take(300).collect();
         let list = self.load();
-        list.insert(0, Entry { id: now, t: now, q, a: answer.to_string() });
+        // two saves within the same millisecond still get different ids
+        let id = list.first().map_or(now, |e| now.max(e.id + 1));
+        let q: String = title.chars().take(300).collect();
+        list.insert(0, Entry { id, t: now, q, a: answer.to_string() });
         list.truncate(MAX);
         self.save();
+        Some(id)
+    }
+
+    /// "Другой вариант": the new answer takes the place of the old one. False if that entry is gone.
+    pub fn replace(&mut self, id: i64, title: &str, answer: &str) -> bool {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+        let list = self.load();
+        let Some(e) = list.iter_mut().find(|e| e.id == id) else { return false };
+        e.q = title.chars().take(300).collect();
+        e.a = answer.to_string();
+        e.t = now;
+        self.save();
+        true
     }
 
     pub fn clear(&mut self) {

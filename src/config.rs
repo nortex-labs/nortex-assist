@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// "custom" is the user's own colour, kept in `accent_custom`.
-pub const ACCENTS: [&str; 7] = ["green", "pink", "blue", "red", "orange", "violet", "custom"];
-pub const DEFAULT_CUSTOM: (u8, u8, u8) = (0x4f, 0xd1, 0xc5);
+pub const ACCENTS: [&str; 8] = ["violet", "blue", "green", "pink", "orange", "red", "graphite", "custom"];
+pub const DEFAULT_CUSTOM: (u8, u8, u8) = (0x8f, 0x80, 0xf7);
 pub const GROQ_MODEL: &str = "qwen/qwen3.8-27b";
 /// Lowest window opacity (10 %): below this the window is too easy to lose.
 pub const MIN_OPACITY: f32 = 0.10;
@@ -19,21 +19,46 @@ pub const DEFAULT_OVERLAY_FONT: u32 = 16;
 pub const TEXT_SCALES: [u32; 6] = [85, 100, 115, 130, 150, 175];
 pub const MAX_PROMPT: usize = 8000;
 pub const SHOT_MODES: [&str; 3] = ["select", "full", "snip"];
-pub const HOTKEY_NAMES: [&str; 4] = ["selection", "screenshot", "free", "retry"];
+/// Hotkey slots (indices into `Hotkeys`).
+pub const HK_ASK: usize = 0;
+pub const HK_SHOT: usize = 1;
+pub const HK_CHAT: usize = 2;
+pub const HK_RETRY: usize = 3;
+pub const HK_VOICE: usize = 4;
+pub const HK_NOTE: usize = 5;
+/// "Одна клавиша на всё": the selection or the screen, asked at once.
+pub const HK_SMART: usize = 6;
+pub const DEFAULT_VOICE_KEY: &str = "F8";
 
-// `default` keeps configs saved before the retry hotkey existed readable.
+// `default` keeps configs saved before the newer hotkeys existed readable.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct Hotkeys {
+    /// "Спросить": the selection (smart mode: or a screenshot when nothing is selected)
     pub selection: String,
     pub screenshot: String,
+    /// free question / the chat window
     pub free: String,
     pub retry: String,
+    /// hold to talk; one key without modifiers by default
+    pub voice: String,
+    /// smart mode: like "ask", but the window waits for a note before sending
+    pub note: String,
+    /// smart mode: the one key (selection or screen, asked at once)
+    pub ask: String,
 }
 
 impl Default for Hotkeys {
     fn default() -> Self {
-        Hotkeys { selection: "Alt+Q".into(), screenshot: "Alt+W".into(), free: "Alt+E".into(), retry: "Alt+S".into() }
+        Hotkeys {
+            selection: "Alt+Q".into(),
+            screenshot: "Alt+W".into(),
+            free: "Alt+E".into(),
+            retry: "Alt+S".into(),
+            voice: DEFAULT_VOICE_KEY.into(),
+            note: "Alt+Shift+W".into(),
+            ask: "Alt+W".into(),
+        }
     }
 }
 
@@ -43,7 +68,10 @@ impl Hotkeys {
             0 => &self.selection,
             1 => &self.screenshot,
             2 => &self.free,
-            _ => &self.retry,
+            3 => &self.retry,
+            4 => &self.voice,
+            5 => &self.note,
+            _ => &self.ask,
         }
     }
     pub fn set(&mut self, i: usize, v: String) {
@@ -51,10 +79,41 @@ impl Hotkeys {
             0 => self.selection = v,
             1 => self.screenshot = v,
             2 => self.free = v,
-            _ => self.retry = v,
+            3 => self.retry = v,
+            4 => self.voice = v,
+            5 => self.note = v,
+            _ => self.ask = v,
+        }
+    }
+    /// The slots that are registered in a key mode.
+    pub fn active(smart: bool) -> Vec<usize> {
+        if smart {
+            vec![HK_SMART, HK_CHAT, HK_NOTE, HK_RETRY, HK_VOICE]
+        } else {
+            vec![HK_ASK, HK_SHOT, HK_CHAT, HK_RETRY, HK_VOICE]
         }
     }
 }
+
+/// A ready-made follow-up under the answer ("Объясни", "Короче"...): the button text and what is sent.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct QuickAction {
+    pub label: String,
+    pub prompt: String,
+}
+
+/// The buttons under an answer when the user has not changed them. The last one ("Другой
+/// вариант") is special: it asks the same question again and marks the answer as not good enough.
+pub fn default_actions() -> Vec<QuickAction> {
+    let t = crate::i18n::tr;
+    vec![
+        QuickAction { label: t("Объясни"), prompt: t("Объясни этот ответ: почему так и как к нему прийти. Коротко, по шагам.") },
+        QuickAction { label: t("Короче"), prompt: t("Сократи ответ до самого главного.") },
+        QuickAction { label: t("Переведи"), prompt: t("Переведи ответ на английский язык (если он уже на английском — на русский).") },
+    ]
+}
+
+pub const MAX_ACTIONS: usize = 3;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct Rect {
@@ -94,8 +153,17 @@ pub struct Config {
     pub bounds: Option<Rect>,
     /// Own system prompt; empty means the built-in one.
     pub prompt: String,
-    /// Short answer first, details behind a button; on unless this is `Some(false)`.
-    pub two_level: Option<bool>,
+    /// "smart" (one key does it all, the default for new installs) or "classic" (separate keys,
+    /// as in 1.3); empty in configs from before 1.4.
+    pub key_mode: String,
+    /// The offer of the smart key mode to users who updated from 1.3: "" none, "pending", "done".
+    pub smart_offer: String,
+    /// The version whose "what's new" the user has seen (shown once after an update).
+    pub seen_version: String,
+    /// Own set of buttons under the answer; None = the default ones.
+    pub actions: Option<Vec<QuickAction>>,
+    /// "Расширенные" is switched on in the settings.
+    pub advanced: bool,
     /// Size of the answer text in percent (one of TEXT_SCALES); None = 100.
     pub text_scale: Option<u32>,
     /// Interface language: "en" for English, anything else is Russian.
@@ -124,17 +192,35 @@ impl Config {
     pub fn is_en(&self) -> bool {
         self.lang == "en"
     }
-    pub fn two_level_on(&self) -> bool {
-        self.two_level != Some(false)
+    pub fn smart_keys(&self) -> bool {
+        self.key_mode != "classic"
+    }
+    pub fn actions(&self) -> Vec<QuickAction> {
+        match &self.actions {
+            Some(a) if !a.is_empty() => a.iter().take(MAX_ACTIONS).cloned().collect(),
+            _ => default_actions(),
+        }
+    }
+    /// "system" (follow Windows, the default), "dark" or "light".
+    pub fn theme_mode(&self) -> &str {
+        match self.theme.as_str() {
+            "dark" => "dark",
+            "light" => "light",
+            _ => "system",
+        }
     }
     pub fn text_scale(&self) -> u32 {
         self.text_scale.filter(|s| TEXT_SCALES.contains(s)).unwrap_or(100)
     }
     pub fn dark(&self) -> bool {
-        self.theme != "light"
+        match self.theme_mode() {
+            "dark" => true,
+            "light" => false,
+            _ => crate::native::windows_dark(),
+        }
     }
     pub fn accent(&self) -> &str {
-        if ACCENTS.contains(&self.accent.as_str()) { &self.accent } else { "green" }
+        if ACCENTS.contains(&self.accent.as_str()) { &self.accent } else { "violet" }
     }
     pub fn custom_rgb(&self) -> (u8, u8, u8) {
         parse_color(&self.accent_custom).unwrap_or(DEFAULT_CUSTOM)
@@ -186,7 +272,34 @@ pub fn hex_color((r, g, b): (u8, u8, u8)) -> String {
     format!("#{r:02X}{g:02X}{b:02X}")
 }
 
+/// The real data folder of the installed program.
+pub fn real_data_dir() -> PathBuf {
+    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("NortexAssist")
+}
+
+/// Test copy: the API keys (and the chosen service and model) from the user's real settings,
+/// read without changing them.
+#[cfg(feature = "test-copy")]
+pub fn import_real_keys(cfg: &mut Config) {
+    let dir = real_data_dir();
+    let Some(store) = crate::crypto::Store::open_read_only(&dir) else { return };
+    let Ok(raw) = std::fs::read(dir.join("config.bin")) else { return };
+    let plain = if crypto::is_encrypted(&raw) { store.decrypt(&raw).ok() } else { Some(raw) };
+    let Some(real) = plain.and_then(|p| serde_json::from_slice::<Config>(&p).ok()) else { return };
+    cfg.gemini_key = real.gemini_key;
+    cfg.groq_key = real.groq_key;
+    cfg.provider = real.provider;
+    cfg.model = real.model;
+}
+
 pub fn data_dir() -> PathBuf {
+    // the test copy keeps its own settings and history next to its exe
+    #[cfg(feature = "test-copy")]
+    {
+        let d = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.join("test-data"))).unwrap_or_else(|| PathBuf::from("test-data"));
+        let _ = std::fs::create_dir_all(&d);
+        return d;
+    }
     // debug builds can use an isolated data folder for tests
     #[cfg(debug_assertions)]
     if let Ok(custom) = std::env::var("NORTEX_DATA_DIR") {
@@ -194,13 +307,21 @@ pub fn data_dir() -> PathBuf {
         let _ = std::fs::create_dir_all(&d);
         return d;
     }
-    let d = dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("NortexAssist");
-    let _ = std::fs::create_dir_all(&d);
-    d
+    #[allow(unreachable_code)]
+    {
+        let d = real_data_dir();
+        let _ = std::fs::create_dir_all(&d);
+        d
+    }
 }
 
 pub fn config_path() -> PathBuf {
     data_dir().join("config.bin")
+}
+
+/// False before the very first start (no settings saved yet).
+pub fn exists() -> bool {
+    config_path().exists()
 }
 
 pub fn load(store: &Store) -> Config {
@@ -242,58 +363,19 @@ pub fn save(store: &Store, cfg: &Config) -> bool {
     }
 }
 
-/// Values the user can change in the settings panel.
-pub struct SettingsInput {
-    pub provider: String,
-    pub gemini_key: String,
-    pub groq_key: String,
-    pub model: String,
-    pub hotkeys: Hotkeys,
-    pub history: bool,
-    pub autostart: bool,
-    pub accent: String,
-    pub opacity: i32,
-    pub prompt: String,
+/// An API key as pasted: a single word of reasonable length.
+pub fn key_looks_valid(k: &str) -> bool {
+    let k = k.trim();
+    (10..=500).contains(&k.chars().count()) && !k.chars().any(char::is_whitespace)
 }
 
-pub fn validate(s: &SettingsInput) -> Result<(), String> {
-    if s.provider != "gemini" && s.provider != "groq" {
-        return Err(crate::i18n::tr("Неизвестный провайдер модели"));
-    }
-    for (k, name) in [(&s.gemini_key, "Gemini"), (&s.groq_key, "Groq")] {
-        let k = k.trim();
-        if !k.is_empty() && (k.chars().count() < 10 || k.chars().count() > 500 || k.chars().any(char::is_whitespace)) {
-            return Err(crate::i18n::trf("Ключ {name} выглядит неверно", &[("name", name)]));
-        }
-    }
-    if s.provider == "gemini" && !s.model.is_empty() {
-        let re = Regex::new(r"(?i)^gemini-[a-z0-9.\-]+$").unwrap();
-        if !re.is_match(&s.model) {
-            return Err(crate::i18n::tr("Недопустимое имя модели Gemini"));
-        }
-    }
-    let accel = Regex::new(r"^(?:(?:Ctrl|Alt|Shift|Super)\+){0,4}[\w`\-=,./;'\[\]]{1,20}$").unwrap();
-    let mut seen = Vec::new();
-    for i in 0..HOTKEY_NAMES.len() {
-        let a = s.hotkeys.get(i);
-        if !accel.is_match(a) {
-            return Err(crate::i18n::trf("Недопустимое сочетание клавиш: {a}", &[("a", &a.chars().take(30).collect::<String>())]));
-        }
-        if seen.contains(&a) {
-            return Err(crate::i18n::tr("Два действия используют одинаковые клавиши"));
-        }
-        seen.push(a);
-    }
-    if !ACCENTS.contains(&s.accent.as_str()) {
-        return Err(crate::i18n::tr("Неизвестный акцентный цвет"));
-    }
-    if !((MIN_OPACITY * 100.0) as i32..=100).contains(&s.opacity) {
-        return Err(crate::i18n::trf("Прозрачность должна быть от {min} до 100%", &[("min", &((MIN_OPACITY * 100.0) as i32).to_string())]));
-    }
-    if s.prompt.chars().count() > MAX_PROMPT {
-        return Err(crate::i18n::trf("Промпт слишком длинный (больше {max} символов)", &[("max", &MAX_PROMPT.to_string())]));
-    }
-    Ok(())
+pub fn valid_gemini_model(m: &str) -> bool {
+    Regex::new(r"(?i)^gemini-[a-z0-9.\-]+$").unwrap().is_match(m.trim())
+}
+
+/// "Alt+Q", "Ctrl+Shift+F5", "F8", "Numpad5"...
+pub fn valid_accel(a: &str) -> bool {
+    Regex::new(r"^(?:(?:Ctrl|Alt|Shift|Super)\+){0,4}[\w`\-=,./;'\[\]]{1,20}$").unwrap().is_match(a)
 }
 
 #[cfg(test)]
